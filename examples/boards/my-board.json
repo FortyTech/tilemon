@@ -1,0 +1,19 @@
+{
+  "name": "My board",
+  "visibility": "private",
+  "source": "native",
+  "children": [
+    {
+      "id": "webapp",
+      "name": "Webapp",
+      "weight": 3,
+      "children": [
+        { "id": "refactor-auth", "name": "Refactor auth", "weight": 1, "status": "blocked", "note": "need staging DB password", "agent": "agent-a" },
+        { "id": "billing", "name": "Billing integration", "weight": 1, "status": "in_progress", "agent": "agent-b" },
+        { "id": "seo-pass", "name": "SEO pass", "weight": 1, "status": "todo" }
+      ]
+    },
+    { "id": "team-atlas", "name": "Team Atlas", "weight": 2, "include": "team-atlas" },
+    { "id": "acme", "name": "Acme", "weight": 1, "include": "acme-jira" }
+  ]
+}

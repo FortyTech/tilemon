@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tilemon — priority board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--tlm-bg:#14120D;--tlm-ink:#ECE7DA;--tlm-dim:#9A9182;--tlm-line:#2A2820;--tlm-gold:#E8C56A;--tlm-panel:#1C1A14}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--tlm-bg);color:var(--tlm-ink);
+    font-family:"Space Grotesk",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  #app{display:flex;flex-direction:column;height:100vh;padding:14px;gap:10px}
+  #topbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  #topbar .brand{font-weight:600;letter-spacing:.02em}
+  #topbar .brand .dim{color:var(--tlm-dim);font-weight:400}
+  #boardSel{margin-left:auto;font-family:"Space Mono",monospace;font-size:12px;background:var(--tlm-panel);color:var(--tlm-ink);
+    border:1px solid var(--tlm-line);border-radius:6px;padding:5px 8px}
+  #board{flex:1;min-height:340px;border-radius:10px}
+  #empty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--tlm-dim);
+    font-family:"Space Mono",monospace;font-size:13px;line-height:1.7}
+  .hint{font-family:"Space Mono",monospace;font-size:10.5px;color:var(--tlm-dim);line-height:1.5}
+  .hint .off{color:#b0563a}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <span class="brand">Tilemon <span class="dim" id="boardName"></span></span>
+    <select id="boardSel" title="switch board"></select>
+  </div>
+  <div id="controls"></div>
+  <div id="board"></div>
+  <div class="hint" id="hint">drag = resize the item it belongs to · click an item to arm it, then drags resize the items inside · double-click = drill in (or open an included board) · click any tile to set its status</div>
+</div>
+
+<script type="module">
+// dashboard.html — the multi-board FILE source adapter. It owns "where the data lives":
+// reads /api/state?board=<slug>, writes back board-scoped POSTs, live-refreshes over SSE,
+// and routes between boards by URL (/boards/<slug>). The renderer (board.js) knows none of
+// this — swap this layer for a DB-backed host and the renderer is unchanged. See SPEC §3.
+import { mount } from './board.js';
+
+const boardEl = document.getElementById('board');
+const controlsEl = document.getElementById('controls');
+const hint = document.getElementById('hint');
+const sel = document.getElementById('boardSel');
+const nameEl = document.getElementById('boardName');
+
+let slug = null, board = null;
+
+const slugFromUrl = () => {
+  const m = location.pathname.match(/^\/boards\/([A-Za-z0-9_-]+)/);
+  return m ? m[1] : new URLSearchParams(location.search).get('board');
+};
+async function listBoards() { const r = await fetch('/api/boards'); return r.ok ? r.json() : []; }
+async function getState(s) {
+  const r = await fetch('/api/state?board=' + encodeURIComponent(s));
+  if (!r.ok) throw new Error('GET /api/state?board=' + s + ' -> ' + r.status);
+  return r.json();
+}
+async function post(path, body) {
+  try {
+    const r = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) console.error('POST', path, '->', r.status, await r.text());
+  } catch (e) { console.error('POST', path, 'failed', e); }
+}
+
+// writes are board-scoped: the current slug is carried in every POST body.
+const onWeightChange = (path, weight) => post('/api/weight', { board: slug, path, weight });
+const onStatusChange = (path, status) => post('/api/status', { board: slug, path, status });
+const openBoard = s => { history.pushState({ slug: s }, '', '/boards/' + s); load(s); };
+
+async function refreshSwitcher() {
+  const boards = await listBoards();
+  sel.innerHTML = boards.map(b => `<option value="${b.slug}"${b.slug === slug ? ' selected' : ''}>${b.name}${b.visibility === 'public' ? ' (public)' : ''}</option>`).join('');
+}
+
+async function load(s) {
+  slug = s;
+  try {
+    const state = await getState(s);
+    document.getElementById('empty')?.remove();
+    boardEl.style.display = '';
+    nameEl.textContent = '· ' + (state.name || s);
+    if (!board) board = mount(boardEl, controlsEl, { state, onWeightChange, onStatusChange, onOpenBoard: openBoard });
+    else board.update(state);
+  } catch (e) {
+    console.error(e);
+    boardEl.style.display = 'none';
+    if (!document.getElementById('empty')) boardEl.insertAdjacentHTML('afterend', `<div id="empty">board "${s}" not found</div>`);
+  }
+  refreshSwitcher();
+}
+
+// pick the starting board: URL slug, else the first board, else an empty-state prompt.
+const boards = await listBoards();
+const start = slugFromUrl() || (boards[0] && boards[0].slug);
+if (start) load(start);
+else {
+  boardEl.style.display = 'none';
+  boardEl.insertAdjacentHTML('afterend', `<div id="empty">No boards yet.<br>An agent creates one by POSTing a status:<br><br>node examples/agent.mjs</div>`);
+}
+
+sel.onchange = () => openBoard(sel.value);
+window.onpopstate = () => { const s = slugFromUrl() || (boards[0] && boards[0].slug); if (s) load(s); };
+
+// Live refresh over SSE: any write (ours, another tab, an agent, a direct file edit) pushes
+// a change; we re-fetch the current board. board.js preserves drill/selection, ignores mid-drag.
+const es = new EventSource('/api/events');
+es.onmessage = async () => { if (!slug) { const b = await listBoards(); if (b[0]) load(b[0].slug); return; } try { board && board.update(await getState(slug)); } catch (e) { console.error(e); } };
+es.onerror = () => { hint.innerHTML = '<span class="off">live updates disconnected — reconnecting…</span>'; };
+</script>
+</body>
+</html>

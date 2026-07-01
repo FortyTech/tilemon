@@ -1,0 +1,5 @@
+{
+  "name": "Acme",
+  "visibility": "private",
+  "source": "jira://ACME"
+}

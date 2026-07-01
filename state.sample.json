@@ -1,0 +1,49 @@
+{
+  "name": "Priorities",
+  "children": [
+    {
+      "id": "work",
+      "name": "Work",
+      "weight": 2,
+      "children": [
+        {
+          "id": "ship-v2",
+          "name": "Ship v2",
+          "weight": 3,
+          "children": [
+            { "id": "api-refactor", "name": "API refactor", "weight": 1, "status": "in_progress" },
+            { "id": "data-migration", "name": "Data migration", "weight": 1, "status": "blocked" },
+            { "id": "release-notes", "name": "Release notes", "weight": 1, "status": "todo" }
+          ]
+        },
+        {
+          "id": "hiring",
+          "name": "Hiring",
+          "weight": 1,
+          "children": [
+            { "id": "review-candidates", "name": "Review candidates", "weight": 1, "status": "todo" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "writing",
+      "name": "Writing",
+      "weight": 1,
+      "children": [
+        { "id": "blog-post", "name": "Blog post", "weight": 1, "status": "todo" },
+        { "id": "book-chapter", "name": "Book chapter", "weight": 2, "status": "in_progress" }
+      ]
+    },
+    {
+      "id": "life",
+      "name": "Life",
+      "weight": 1,
+      "children": [
+        { "id": "gym", "name": "Gym", "weight": 1, "status": "todo" },
+        { "id": "taxes", "name": "Taxes", "weight": 1, "status": "blocked" },
+        { "id": "call-mum", "name": "Call mum", "weight": 1, "status": "done" }
+      ]
+    }
+  ]
+}

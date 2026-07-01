@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Forty — priority board</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#14120D;--ink:#ECE7DA;--dim:#9A9182;--line:#2A2820;--gold:#E8C56A;--panel:#1C1A14}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:"Space Grotesk",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  #app{display:flex;flex-direction:column;height:100vh;padding:14px;gap:10px}
+  .bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:30px}
+  .crumb{font-size:14px;color:var(--dim);display:flex;align-items:center;gap:6px;flex:1;min-width:180px}
+  .crumb b{color:var(--ink);font-weight:500}
+  .crumb span.c{cursor:pointer}.crumb span.c:hover{color:var(--gold)}.crumb .sep{color:var(--line)}
+  button,.tog{font-family:"Space Mono",monospace;font-size:11.5px;background:var(--panel);color:var(--ink);
+    border:1px solid var(--line);border-radius:6px;padding:6px 9px;cursor:pointer;transition:border-color .15s,color .15s,opacity .15s}
+  button:hover:not(:disabled){border-color:var(--gold);color:var(--gold)}
+  button:disabled{opacity:.32;cursor:default}
+  .grp{display:flex;gap:4px;align-items:center}
+  .grp .lbl{font-family:"Space Mono",monospace;font-size:10.5px;color:var(--dim);margin-right:2px}
+  .sizebar{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);
+    border-radius:8px;padding:7px 12px;font-family:"Space Mono",monospace;font-size:11.5px;color:var(--dim)}
+  .sizebar b{color:var(--ink);font-weight:400}
+  .sizebar input[type=range]{flex:1;min-width:120px;accent-color:var(--gold)}
+  .sizebar .pct{color:var(--gold);min-width:38px;text-align:right}
+  #board{position:relative;flex:1;min-height:340px;border-radius:10px;overflow:hidden;background:var(--bg);touch-action:none}
+  .tile{position:absolute;border-radius:5px;overflow:hidden;cursor:grab;user-select:none;
+    outline:0 solid transparent;
+    transition:left .18s ease,top .18s ease,width .18s ease,height .18s ease,background .25s ease,opacity .2s ease}
+  #board.nodrag .tile{transition:background .25s ease}
+  .tile:active{cursor:grabbing}
+  .tile.sel{outline:2px solid var(--gold);outline-offset:-2px;z-index:600!important}
+  .tile.armed{outline:2px dashed var(--gold);outline-offset:-2px;z-index:600!important}
+  .tile .hd{position:absolute;top:0;left:0;right:0;height:22px;display:flex;align-items:center;
+    justify-content:space-between;padding:0 8px;gap:6px;pointer-events:none}
+  .tile .leaf{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:6px;gap:3px;pointer-events:none}
+  .nm{font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+  .wt{font-family:"Space Mono",monospace;font-size:10.5px;opacity:.6;white-space:nowrap}
+  .hot{animation:pulse 1.7s ease-in-out infinite}
+  @keyframes pulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
+  @media (prefers-reduced-motion:reduce){.hot{animation:none}}
+  .hint{font-family:"Space Mono",monospace;font-size:10.5px;color:var(--dim);line-height:1.5}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar" id="controls"></div>
+  <div id="board"></div>
+  <div class="hint">drag anything = resize its epic (down/right bigger, up/left smaller) · click an epic to arm it (dashed), then drags resize the tasks inside · double-click = drill in</div>
+</div>
+<script id="seed" type="application/json">{"id":1,"name":"Priorities","weight":1,"heat":0,"children":[{"id":2,"name":"Work","weight":2,"heat":0,"children":[{"id":3,"name":"Ship v2","weight":1,"heat":0.5,"children":null},{"id":4,"name":"Data migration","weight":1,"heat":1,"children":null}]},{"id":5,"name":"Writing","weight":1,"heat":0,"children":[{"id":6,"name":"Blog post","weight":1,"heat":0,"children":null}]},{"id":7,"name":"Life","weight":1,"heat":0,"children":[{"id":8,"name":"Gym","weight":1,"heat":0,"children":null},{"id":9,"name":"Taxes","weight":1,"heat":0.5,"children":null}]}]}</script>
+<script>
+const board=document.getElementById('board'), controls=document.getElementById('controls');
+let uid=1, showWeights=false, selId=null, tileEls={}, drag=null, freeze=false;
+const PAD=5, HEADER=22, INSET=2;
+
+function loadSeed(){const s=JSON.parse(document.getElementById('seed').textContent);
+  let mx=0;(function w(n){mx=Math.max(mx,n.id);(n.children||[]).forEach(w)})(s);
+  uid=mx+1; return JSON.parse(JSON.stringify(s));}
+let root=loadSeed(), viewRoot=root;
+
+function worstAspect(row,rowArea,side){const thick=rowArea/side;let worst=1;
+  for(const it of row){const len=(it.area/rowArea)*side;const r=Math.max(thick/len,len/thick);if(r>worst)worst=r;}return worst;}
+function squarify(items,x,y,w,h,out){
+  const rest=items.slice();
+  while(rest.length){
+    const side=Math.min(w,h); let row=[],rowArea=0,worst=Infinity;
+    while(rest.length){const it=rest[0],na=rowArea+it.area,nw=worstAspect(row.concat(it),na,side);
+      if(row.length===0||nw<=worst){row.push(rest.shift());rowArea=na;worst=nw;}else break;}
+    let thick=rowArea/side;
+    if(w>=h){thick=Math.min(thick,w);let cy=y;
+      for(const it of row){const ih=(it.area/rowArea)*h;out.push({node:it.node,x,y:cy,w:thick,h:ih});cy+=ih;}
+      x+=thick;w-=thick;}
+    else{thick=Math.min(thick,h);let cx=x;
+      for(const it of row){const iw=(it.area/rowArea)*w;out.push({node:it.node,x:cx,y,w:iw,h:thick});cx+=iw;}
+      y+=thick;h-=thick;}
+  }
+}
+function layout(node,x,y,w,h,depth,isView){
+  node._rect={x,y,w,h,depth};
+  const ch=node.children; if(!ch||!ch.length) return;
+  const header=isView?0:HEADER;
+  const ix=x+PAD, iy=y+PAD+header, iw=w-2*PAD, ih=h-2*PAD-header;
+  if(iw<4||ih<4){ch.forEach(c=>{c._parent=node;layout(c,x,y,0,0,depth+1,false);});return;}
+  const total=ch.reduce((s,c)=>s+Math.max(c.weight,1e-6),0), area=iw*ih;
+  const items=ch.map(c=>({node:c,area:area*(Math.max(c.weight,1e-6)/total)}));
+  if(freeze) items.sort((a,b)=>(a.node._ord==null?0:a.node._ord)-(b.node._ord==null?0:b.node._ord));
+  else items.sort((a,b)=>b.area-a.area||a.node.id-b.node.id);
+  items.forEach((it,i)=>{it.node._ord=i;});
+  const out=[]; squarify(items,ix,iy,iw,ih,out);
+  for(const o of out){o.node._parent=node; layout(o.node,o.x,o.y,o.w,o.h,depth+1,false);}
+}
+function calcHeat(node){const ch=node.children;
+  if(!ch||!ch.length){node._heat=node.heat||0;return node._heat;}
+  let a=0,s=0;for(const c of ch){const ca=Math.max(c._rect.w*c._rect.h,1e-4),hc=calcHeat(c);a+=ca;s+=hc*ca;}
+  node._heat=a?s/a:0;return node._heat;}
+function lerp(a,b,t){return a+(b-a)*t}
+function heatColor(h){h=Math.max(0,Math.min(1,h));
+  const st=[[0,[50,48,41]],[0.35,[92,74,46]],[0.7,[176,106,31]],[1,[216,67,46]]];
+  for(let i=0;i<st.length-1;i++){const[p0,c0]=st[i],[p1,c1]=st[i+1];
+    if(h<=p1){const t=(h-p0)/(p1-p0);return`rgb(${Math.round(lerp(c0[0],c1[0],t))},${Math.round(lerp(c0[1],c1[1],t))},${Math.round(lerp(c0[2],c1[2],t))})`}}
+  return'rgb(216,67,46)';}
+function textColor(h){return h>0.6?'#2A1206':'var(--ink)'}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function find(n,id){if(n.id===id)return n;for(const c of(n.children||[])){const f=find(c,id);if(f)return f;}return null;}
+function selected(){return selId?find(root,selId):null;}
+function activeContainer(){const s=selected();return (s&&s.children&&s.children.length)?s:viewRoot;}
+function resizeTarget(node,ac){let a=node;while(a&&a._parent&&a._parent!==ac)a=a._parent;return (a&&a._parent===ac)?a:null;}
+function path(n){const p=[];let c=n;while(c){p.unshift(c);c=c._parent;}return p;}
+function shareOf(node){const p=node._parent;if(!p)return 100;const s=p.children.reduce((a,c)=>a+c.weight,0);return s?node.weight/s*100:100;}
+function setShare(node,pct){const p=node._parent;if(!p)return;
+  const others=p.children.reduce((s,c)=>s+c.weight,0)-node.weight; if(others<=1e-9)return;
+  const f=Math.max(0.02,Math.min(0.97,pct/100)); node.weight=f/(1-f)*others;}
+
+function renderBoard(){
+  const W=board.clientWidth,H=board.clientHeight;
+  layout(viewRoot,0,0,W,H,0,true); calcHeat(viewRoot);
+  const vis=[];(function walk(n){(n.children||[]).forEach(c=>{vis.push(c);walk(c);})})(viewRoot);
+  const seen=new Set();
+  for(const node of vis){
+    const r=node._rect;
+    if(r.w<3||r.h<3){ if(tileEls[node.id]){tileEls[node.id].remove();delete tileEls[node.id];} continue; }
+    seen.add(node.id);
+    const isParent=node.children&&node.children.length;
+    let el=tileEls[node.id];
+    if(!el){el=document.createElement('div');el.className='tile';el.style.opacity='0';
+      el.dataset.id=node.id; attach(el); tileEls[node.id]=el; board.appendChild(el);
+      requestAnimationFrame(()=>{if(tileEls[node.id])el.style.opacity='1';});}
+    el.style.left=(r.x+INSET)+'px';el.style.top=(r.y+INSET)+'px';
+    el.style.width=Math.max(0,r.w-2*INSET)+'px';el.style.height=Math.max(0,r.h-2*INSET)+'px';
+    el.style.zIndex=r.depth; el.style.background=heatColor(node._heat); el.style.color=textColor(node._heat);
+    const isSel=selId===node.id, isPar=node.children&&node.children.length;
+    el.classList.toggle('sel',isSel&&!isPar); el.classList.toggle('armed',isSel&&!!isPar);
+    el.classList.toggle('hot',node._heat>0.66);
+    const wt=showWeights?`<span class="wt">${node.weight.toFixed(node.weight<10?1:0)}</span>`:'';
+    let html='';
+    if(isParent){if(r.w>54&&r.h>30)html=`<div class="hd"><span class="nm">${esc(node.name)}</span>${wt}</div>`;}
+    else{if(r.w>40&&r.h>26)html=`<div class="leaf"><span class="nm">${esc(node.name)}</span>${wt}</div>`;}
+    if(el._html!==html){el.innerHTML=html;el._html=html;}
+  }
+  for(const id in tileEls){if(!seen.has(+id)){tileEls[id].remove();delete tileEls[id];}}
+}
+
+function attach(el){
+  el.addEventListener('pointerdown',onDown);
+  el.addEventListener('dblclick',e=>{e.stopPropagation();const n=find(root,+el.dataset.id);
+    if(n&&n.children&&n.children.length){viewRoot=n;selId=null;render();}});
+}
+function onDown(e){
+  e.stopPropagation();
+  const id=+e.currentTarget.dataset.id, node=find(root,id); if(!node)return;
+  let ac=activeContainer(), target=resizeTarget(node,ac);
+  if(!target){ ac=viewRoot; target=resizeTarget(node,ac)||node; }   // dragged outside armed parent -> top level
+  const p=target._parent, others=p?p.children.reduce((s,c)=>s+c.weight,0)-target.weight:0;
+  drag={tappedId:id,node:target,p,others,sx:e.clientX,sy:e.clientY,sw:target.weight,moved:false};
+  freeze=true;
+  board.classList.add('nodrag');
+  try{e.currentTarget.setPointerCapture(e.pointerId);}catch(_){}
+  window.addEventListener('pointermove',onMove);
+  window.addEventListener('pointerup',onUp);
+}
+function onMove(e){
+  if(!drag)return;
+  const dx=e.clientX-drag.sx, dy=e.clientY-drag.sy;
+  if(!drag.moved&&Math.hypot(dx,dy)<4)return;
+  drag.moved=true;
+  if(drag.p&&drag.others>0){
+    const delta=dx+dy;                         // right and down grow (pull toward bottom-right)
+    let w=drag.sw*Math.exp(delta/220);
+    const minW=drag.others*0.01/0.99, maxW=drag.others*0.97/0.03;
+    drag.node.weight=Math.max(minW,Math.min(maxW,w));
+    renderBoard();
+  }
+}
+function onUp(){
+  window.removeEventListener('pointermove',onMove);
+  window.removeEventListener('pointerup',onUp);
+  board.classList.remove('nodrag');
+  freeze=false;
+  if(drag&&!drag.moved){selId=drag.tappedId;} drag=null; render();
+}
+
+function renderControls(){
+  const sel=selected(), p=path(viewRoot);
+  const crumb=p.map((n,i)=>i===p.length-1?`<b>${esc(n.name)}</b>`
+    :`<span class="c" data-id="${n.id}">${esc(n.name)}</span><span class="sep">/</span>`).join(' ');
+  controls.innerHTML=`
+    <div class="crumb">${crumb}</div>
+    <div class="grp"><button id="addBtn">+ child</button><button id="renBtn">rename</button><button id="delBtn">delete</button></div>
+    <div class="grp"><span class="lbl">heat</span><button id="hCalm">calm</button><button id="hWarm">warm</button><button id="hHot">hot</button></div>
+    <div class="grp"><button id="wtTog" class="tog">weights: ${showWeights?'on':'off'}</button><button id="resetBtn">reset</button></div>`;
+  clearSizebar();
+  if(sel&&sel._parent){
+    const only=sel._parent.children.length===1;
+    const sb=document.createElement('div'); sb.className='sizebar';
+    sb.innerHTML=`fine-tune <b>${esc(sel.name)}</b> in <b>${esc(sel._parent.name)}</b>
+      <input type="range" id="sizeR" min="2" max="95" value="${Math.round(shareOf(sel))}" ${only?'disabled':''}>
+      <span class="pct" id="sizeP">${Math.round(shareOf(sel))}%</span>`;
+    controls.parentNode.insertBefore(sb, board);
+    const rg=sb.querySelector('#sizeR'),lab=sb.querySelector('#sizeP');
+    rg.addEventListener('input',()=>{setShare(sel,+rg.value);lab.textContent=Math.round(shareOf(sel))+'%';renderBoard();});
+  }
+  const leaf=sel&&!(sel.children&&sel.children.length);
+  controls.querySelector('#addBtn').disabled=!sel;
+  controls.querySelector('#renBtn').disabled=!sel;
+  controls.querySelector('#delBtn').disabled=!sel||sel===root||sel===viewRoot;
+  ['hCalm','hWarm','hHot'].forEach(id=>controls.querySelector('#'+id).disabled=!leaf);
+  controls.querySelectorAll('.c').forEach(s=>s.onclick=()=>{const t=find(root,+s.dataset.id);if(t){viewRoot=t;selId=null;render();}});
+  controls.querySelector('#addBtn').onclick=()=>{if(!sel)return;if(!sel.children)sel.children=[];sel.children.push({id:uid++,name:'new task',weight:1,heat:0,children:null});render();};
+  controls.querySelector('#renBtn').onclick=()=>{if(!sel)return;const v=prompt('name',sel.name);if(v!=null&&v.trim()){sel.name=v.trim();render();}};
+  controls.querySelector('#delBtn').onclick=()=>{if(!sel||!sel._parent)return;const pa=sel._parent;pa.children=pa.children.filter(c=>c!==sel);if(!pa.children.length)pa.children=null;selId=null;render();};
+  const sh=v=>()=>{const s=selected();if(s&&!(s.children&&s.children.length)){s.heat=v;render();}};
+  controls.querySelector('#hCalm').onclick=sh(0);controls.querySelector('#hWarm').onclick=sh(0.5);controls.querySelector('#hHot').onclick=sh(1);
+  controls.querySelector('#wtTog').onclick=()=>{showWeights=!showWeights;render();};
+  controls.querySelector('#resetBtn').onclick=()=>{root=loadSeed();viewRoot=root;selId=null;for(const k in tileEls){tileEls[k].remove();delete tileEls[k];}render();};
+}
+function clearSizebar(){const o=document.querySelector('.sizebar');if(o)o.remove();}
+function render(){renderControls();renderBoard();}
+board.addEventListener('pointerdown',e=>{if(e.target===board){selId=null;render();}});
+new ResizeObserver(()=>renderBoard()).observe(board);
+render();
+</script>
+</body>
+</html>

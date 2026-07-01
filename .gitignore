@@ -1,0 +1,10 @@
+node_modules/
+*.tmp
+state.*.tmp
+# personal boards — keep the samples + fixture, ignore real ones
+/boards/
+state.local.json
+state.live.json
+state.forty.json
+.DS_Store
+*.tgz
