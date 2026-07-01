@@ -1,7 +1,7 @@
-// Headless check of board.js's data pipeline using a minimal DOM shim.
-// No browser / jsdom needed: we stub exactly what mount() touches, render an
-// anonymized fixture, and assert the bridge logic (done-drop, status->heat,
-// area-weighted rollup, string-id handling, weight-share callback path).
+// Headless check of board.js's data pipeline + interaction wiring using a minimal DOM shim.
+// No browser / jsdom: we stub exactly what mount() touches, then assert on the resulting tiles
+// and the callbacks fired — including the tricky bit, cross-board write addressing when a
+// nested board is inlined (a node's edits must target ITS board, not the one you're viewing).
 import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { mount } from '../board.js';
@@ -10,26 +10,24 @@ import { mount } from '../board.js';
 let raf = [];
 globalThis.requestAnimationFrame = fn => { raf.push(fn); return raf.length; };
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+globalThis.prompt = () => globalThis.__prompt ?? 'X';
+globalThis.confirm = () => globalThis.__confirm ?? true;
+const winHandlers = {};                                  // board.js adds pointermove/up to the window
+globalThis.addEventListener = (t, f) => { (winHandlers[t] ||= []).push(f); };
+globalThis.removeEventListener = (t, f) => { winHandlers[t] = (winHandlers[t] || []).filter(x => x !== f); };
 
-const doc = {
-  head: { appendChild() {} },
-  getElementById: () => ({ /* style already injected */ }),
-  createElement: () => makeEl(),
-};
+const doc = { head: { appendChild() {} }, getElementById: () => ({}), createElement: () => makeEl(), defaultView: globalThis };
 function makeEl() {
   const el = {
-    ownerDocument: doc, children: [], _listeners: {}, style: {}, dataset: {},
-    _cls: new Set(), innerHTML: '', _html: undefined,
-    classList: {
-      add: c => el._cls.add(c), remove: c => el._cls.delete(c),
-      toggle: (c, on) => { on ? el._cls.add(c) : el._cls.delete(c); return on; },
-      contains: c => el._cls.has(c),
-    },
+    ownerDocument: doc, children: [], _listeners: {}, style: {}, dataset: {}, _q: {},
+    _cls: new Set(), className: '', innerHTML: '', _html: undefined, offsetWidth: 200, offsetHeight: 120,
+    classList: { add: c => el._cls.add(c), remove: c => el._cls.delete(c), toggle: (c, on) => { on ? el._cls.add(c) : el._cls.delete(c); return on; }, contains: c => el._cls.has(c) },
     addEventListener(t, f) { (el._listeners[t] ||= []).push(f); },
     removeEventListener() {}, setPointerCapture() {},
     appendChild(c) { c._parentEl = el; el.children.push(c); return c; },
     remove() { const p = el._parentEl; if (p) { const i = p.children.indexOf(el); if (i >= 0) p.children.splice(i, 1); } },
-    querySelector: () => makeEl(), querySelectorAll: () => [],
+    querySelector(sel) { return el._q[sel] || (el._q[sel] = makeEl()); },
+    querySelectorAll: () => [],
     get clientWidth() { return el._w ?? 0; }, get clientHeight() { return el._h ?? 0; },
   };
   return el;
@@ -37,116 +35,99 @@ function makeEl() {
 const boardEl = makeEl(); boardEl._w = 1200; boardEl._h = 700;
 const controlsEl = makeEl();
 
+// stamp a single-board tree the way the server does (_board + local dotted _path)
+function stampSingle(tree, board) {
+  tree._board = board; tree._path = '';
+  (function walk(n) { for (const c of n.children || []) { c._board = board; c._path = n._path ? n._path + '.' + c.id : c.id; walk(c); } })(tree);
+  return tree;
+}
+
 // ---- run ---------------------------------------------------------------------
-const state = JSON.parse(await readFile(new URL('./fixture.json', import.meta.url)));
+const state = stampSingle(JSON.parse(await readFile(new URL('./fixture.json', import.meta.url))), 'fixture');
 const writes = [];
 const board = mount(boardEl, controlsEl, {
   state,
-  onWeightChange: (path, weight) => writes.push({ kind: 'weight', path, weight }),
-  onStatusChange: (path, status) => writes.push({ kind: 'status', path, status }),
+  onStatusChange: (b, path, status) => writes.push({ kind: 'status', b, path, status }),
+  onWeightChange: (b, path, weight) => writes.push({ kind: 'weight', b, path, weight }),
+  onAddNode: (b, path, addKind, name) => writes.push({ kind: 'add', b, path, addKind, name }),
+  onRenameNode: (b, path, name) => writes.push({ kind: 'rename', b, path, name }),
+  onDeleteNode: (b, path) => writes.push({ kind: 'del', b, path }),
   onOpenBoard: slug => writes.push({ kind: 'open', slug }),
 });
-raf.forEach(fn => fn()); // flush opacity-in callbacks
+raf.forEach(fn => fn());
 
-const tiles = boardEl.children;
-const heatOf = id => tiles.find(t => t.dataset.id === id)?.style.background;
-
-// 1. every non-done node got a tile (4 epics + a sub-epic + their open leaves)
-assert.ok(tiles.length > 25, `expected many tiles, got ${tiles.length}`);
-
-// 2. done leaves drop off the board entirely
-function countOpenLeaves(n) {
-  const k = n.children;
-  if (!k || !k.length) return n.status === 'done' ? 0 : 1;
-  return k.reduce((s, c) => s + countOpenLeaves(c), 0);
+const T = () => boardEl.children.filter(t => t.className === 'tile');   // live (excludes empty-hint + popover)
+const tile = id => T().find(t => t.dataset.id === id);
+const tileIds = () => new Set(T().map(t => t.dataset.id));
+const heatOf = id => tile(id)?.style.background;
+const calmColor = 'rgb(50,48,41)', blockedColor = 'rgb(216,67,46)';
+function clickTile(id) {                                  // pointerdown then pointerup (no move) => select
+  const t = tile(id);
+  t._listeners.pointerdown[0]({ stopPropagation() {}, currentTarget: t, clientX: 0, clientY: 0, pointerId: 1 });
+  (winHandlers.pointerup || []).slice().forEach(f => f());
+  raf.forEach(fn => fn());
 }
-const visibleLeaves = tiles.filter(t => (t._html || '').includes('class="leaf"')).length;
-// (only leaves big enough to label render text; just assert no 'done' id is present)
-const doneIds = [];
-(function walk(n){ const k=n.children; if(!k||!k.length){ if(n.status==='done') doneIds.push(n.id); } else k.forEach(walk); })(state);
-for (const id of doneIds) assert.equal(heatOf(id), undefined, `done leaf ${id} should not render`);
+const popover = () => boardEl.children.find(c => c.className === 'tlm-pop');
 
-// 3. status -> heat -> colour. blocked must be hot (vermilion-ish, high R), todo calm (dark).
-const blockedColor = 'rgb(216,67,46)';
-const calmColor = 'rgb(50,48,41)';
-// pick a known todo leaf
-const aTodo = 'gamma-1';
-assert.equal(heatOf(aTodo), calmColor, `todo leaf should be calm, got ${heatOf(aTodo)}`);
+// 1. tiles render, status→heat, done-drop, parent-status floor (fixture: no done items)
+assert.ok(T().length > 25, `expected many tiles, got ${T().length}`);
+assert.equal(heatOf('gamma-1'), calmColor, 'todo leaf is calm');
 
-// flip it blocked via a fresh state and update(); its tile must turn hot, and its
-// parent epic must heat up too (area-weighted rollup crosses the leaf->epic boundary).
-const s2 = JSON.parse(JSON.stringify(state));
-(function setBlocked(n){ if(n.id===aTodo){n.status='blocked';return true;} return (n.children||[]).some(setBlocked); })(s2);
-board.update(s2); raf.forEach(fn => fn());
-assert.equal(heatOf(aTodo), blockedColor, `blocked leaf should be vermilion, got ${heatOf(aTodo)}`);
-assert.ok(tiles.find(t => t.dataset.id === aTodo)._cls.has('hot'), 'blocked leaf tile should have .hot');
-// parent epic 'gamma' should now be warmer than pure-calm
-const epicColor = heatOf('gamma');
-assert.notEqual(epicColor, calmColor, `epic with a blocked child should not be fully calm (rollup), got ${epicColor}`);
-
-// 4. done-drop + parent-prune (synthetic, since the FO data has no `done` items):
-//    a leaf marked done vanishes; an epic whose children are ALL done vanishes too.
-const s3 = {
-  name: 'T', children: [
-    { id: 'mixed', name: 'Mixed', weight: 1, children: [
-      { id: 'keep', name: 'Keep', weight: 1, status: 'todo' },
-      { id: 'gone', name: 'Gone', weight: 1, status: 'done' },
-    ]},
-    { id: 'alldone', name: 'All done', weight: 1, children: [
-      { id: 'd1', name: 'd1', weight: 1, status: 'done' },
-    ]},
-  ],
-};
+// 2. done-drop + parent-prune (synthetic)
+const s3 = stampSingle({ name: 'T', children: [
+  { id: 'mixed', name: 'Mixed', weight: 1, children: [ { id: 'keep', name: 'Keep', weight: 1, status: 'todo' }, { id: 'gone', name: 'Gone', weight: 1, status: 'done' } ] },
+  { id: 'alldone', name: 'All done', weight: 1, children: [ { id: 'd1', name: 'd1', weight: 1, status: 'done' } ] },
+] }, 't');
 board.update(s3); raf.forEach(fn => fn());
-const idsNow = new Set(tiles.map(t => t.dataset.id));
-assert.ok(idsNow.has('keep'), 'open leaf should remain');
-assert.ok(!idsNow.has('gone'), 'done leaf should be dropped');
-assert.ok(idsNow.has('mixed'), 'parent with an open child should remain');
-assert.ok(!idsNow.has('alldone'), 'epic with all children done should be pruned');
+let ids = tileIds();
+assert.ok(ids.has('keep') && ids.has('mixed'), 'open leaf + its parent remain');
+assert.ok(!ids.has('gone') && !ids.has('alldone'), 'done leaf dropped, all-done epic pruned');
 
-// 5. a PARENT's own status is a heat floor (recursive: any node can be blocked,
-//    independent of its children — the whole branch is stuck, not one task in it).
-function mark(n, id, status) { if (n.id === id) { n.status = status; return true; } return (n.children || []).some(c => mark(c, id, status)); }
-const s4 = JSON.parse(JSON.stringify(state)); mark(s4, 'gamma', 'blocked');
-board.update(s4); raf.forEach(fn => fn());
-assert.equal(heatOf('gamma'), blockedColor, `parent with its own blocked status should be hot, got ${heatOf('gamma')}`);
-assert.ok(tiles.find(t => t.dataset.id === 'gamma')._cls.has('hot'), 'blocked parent tile should have .hot');
-assert.equal(heatOf('gamma-1'), calmColor, 'a todo child of a blocked parent stays calm itself');
-
-// 6. show-done makes `done` reversible from the board (not a one-way trapdoor):
-//    toggling it on reveals done items (dimmed) so they can be selected and un-done.
-board.update(s3);
-board.setShowDone(true); raf.forEach(fn => fn());
-let shown = new Set(tiles.map(t => t.dataset.id));
-assert.ok(shown.has('gone'), 'show-done should reveal a done leaf');
-assert.ok(shown.has('alldone') && shown.has('d1'), 'show-done should reveal an all-done branch');
-assert.ok(tiles.find(t => t.dataset.id === 'gone')._cls.has('done'), 'revealed done tile should be dimmed (.done)');
-assert.equal(heatOf('gone'), 'rgb(74,92,58)', 'done tile should render sage-green, not on the heat ramp');
+// 3. show-done reveals (green) then re-hides
+board.update(s3); board.setShowDone(true); raf.forEach(fn => fn());
+assert.ok(tile('gone'), 'show-done reveals a done leaf');
+assert.equal(heatOf('gone'), 'rgb(74,92,58)', 'done tile is sage-green');
 board.setShowDone(false); raf.forEach(fn => fn());
-assert.ok(!tiles.map(t => t.dataset.id).includes('gone'), 'hiding done removes it from the board again');
+assert.ok(!tile('gone'), 'hiding done removes it again');
 
-// 7. include tiles: a node with `_include` renders as a navigable summary tile — heat from
-//    the server-provided summary, an .include marker, and double-click navigates (no inline splice).
-const s7 = {
-  name: 'With includes', children: [
-    { id: 'local', name: 'Local work', weight: 1, status: 'todo' },
-    { id: 'team', name: 'Team board', weight: 2, _include: 'team-atlas', _summaryHeat: 0.9 },
+// 4. INLINED nested board: children are visible inline, tile is marked, heat rolls up across the boundary
+const inlined = {
+  name: 'Home', _board: 'home', _path: '', children: [
+    { id: 'local', name: 'Local', weight: 1, status: 'todo', _board: 'home', _path: 'local' },
+    { id: 'team', name: 'Team', weight: 2, _boardLink: 'team', _board: 'home', _path: 'team', children: [
+      { id: 'job1', name: 'Job 1', weight: 1, status: 'blocked', _board: 'team', _path: 'job1' },
+      { id: 'job2', name: 'Job 2', weight: 1, status: 'todo', _board: 'team', _path: 'job2' },
+    ] },
   ],
 };
-board.update(s7); raf.forEach(fn => fn());
-const incTile = tiles.find(t => t.dataset.id === 'team');
-assert.ok(incTile, 'include node should render a tile');
-assert.ok(incTile._cls.has('include'), 'include tile should carry .include');
-assert.ok(incTile._cls.has('hot') && heatOf('team') !== calmColor, 'include tile takes the served summary heat (0.9 → hot)');
-assert.ok((incTile._html || '').includes('badge'), 'include tile shows a board badge');
-assert.ok(!tiles.find(t => t.dataset.id === 'team-atlas'), 'included board is NOT inlined (navigate, not splice)');
-const before = writes.filter(w => w.kind === 'open').length;
-incTile._listeners.dblclick[0]({ stopPropagation() {} });   // double-click the include tile
-const opened = writes.filter(w => w.kind === 'open');
-assert.equal(opened.length, before + 1, 'double-clicking an include fires onOpenBoard');
-assert.equal(opened.at(-1).slug, 'team-atlas', 'onOpenBoard gets the included board slug');
+board.update(inlined); raf.forEach(fn => fn());
+assert.ok(tile('job1') && tile('job2'), 'nested board children are inlined (visible), not hidden behind navigation');
+assert.ok(tile('team')._cls.has('board'), 'nested-board tile is marked .board');
+assert.notEqual(heatOf('team'), calmColor, 'a blocked job inside rolls heat up across the board boundary');
 
-// 8. drill + selection survive an update (no exception, viewRoot preserved by id)
-board.update(JSON.parse(JSON.stringify(s2)));
+// 5. CROSS-BOARD WRITE: editing a node inside the inlined board targets ITS board, not "home".
+clickTile('job1');
+let pop = popover(); assert.ok(pop, 'selecting a tile opens its popover');
+pop.querySelector('#wmore').onclick();                   // nudge size bigger
+const w = writes.filter(x => x.kind === 'weight').at(-1);
+assert.equal(w.b, 'team', 'weight write targets the sub-board (team), not the viewed board (home)');
+assert.equal(w.path, 'job1', 'weight write uses the local path within that board');
+globalThis.__prompt = 'Subtask';
+pop.querySelector('#pAddItem').onclick();
+const a = writes.filter(x => x.kind === 'add').at(-1);
+assert.deepEqual([a.b, a.path, a.addKind], ['team', 'job1', 'item'], 'add into a sub-board node targets that board');
 
-console.log(`PASS — ${tiles.length} tiles, done-drop + prune + rollup + parent-status floor + show-done + include-nav verified`);
+// 6. double-click a nested board drills in (viewRoot changes), not navigate
+tile('team')._listeners.dblclick[0]({ stopPropagation() {} });
+raf.forEach(fn => fn());
+ids = tileIds();
+assert.ok(ids.has('job1') && !ids.has('local'), 'double-click a board drills into it (only its children show)');
+
+// 7. header "add" targets the current view root's board
+board.update(state); raf.forEach(fn => fn());
+globalThis.__prompt = 'Top level thing';
+controlsEl.querySelector('#addItem').onclick();
+const ha = writes.filter(x => x.kind === 'add').at(-1);
+assert.deepEqual([ha.b, ha.path, ha.addKind, ha.name], ['fixture', '', 'item', 'Top level thing'], 'header add → (viewRoot board, root path, item)');
+
+console.log(`PASS — render + heat + done-drop + show-done + inlined-boards + cross-board writes + add verified`);

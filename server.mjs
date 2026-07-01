@@ -40,6 +40,13 @@ const clients = new Set();
 const slugOk = s => typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(s);
 const boardFile = slug => join(BOARDS, slug + '.json');
 const humanize = id => id.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+const slugify = s => (String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item');
+// make `base` unique among a set of existing ids/slugs (append -2, -3, …)
+function uniq(base, taken) {
+  if (!taken.has(base)) return base;
+  let i = 2; while (taken.has(`${base}-${i}`)) i++;
+  return `${base}-${i}`;
+}
 
 // ---- board io (atomic writes; all writes serialised so near-simultaneous ones don't clobber) ----
 async function readBoard(slug) {
@@ -68,50 +75,40 @@ async function listBoards() {
 }
 
 // ---- heat rollup for an included board's summary tile (weight-proxied; the client uses rendered area) ----
-function computeHeat(node) {
-  if (node._include !== undefined) return node._summaryHeat || 0;
-  const own = STATUS_HEAT[node.status] ?? 0;
-  const ch = node.children;
-  if (!ch || !ch.length) return own;
-  let tw = 0, s = 0;
-  for (const c of ch) {
-    if (c.status === 'done' && !(c.children && c.children.length)) continue; // done leaves drop off
-    const w = Math.max(Number(c.weight) || 1, 1e-6);
-    tw += w; s += computeHeat(c) * w;
-  }
-  const rollup = tw ? s / tw : 0;
-  return Math.max(own, rollup);
-}
-
-// ---- resolve a board for rendering: includes become navigable summary tiles, never inlined ----
+// ---- resolve a board for rendering: includes are INLINED at full granularity ----
+// Every node is stamped with its owning board (`_board`) and local dotted path within that
+// board (`_path`), so the client can write to the right board even across nested boundaries.
+// An include becomes a boundary node (`_boardLink: slug`) whose children are the sub-board's
+// resolved tree. Read-only sources mark their nodes `_ro`. Acyclic-guarded.
 async function resolveBoard(slug, chain = []) {
   if (chain.includes(slug)) return { __cycle: true };
   let board;
   try { board = await readBoard(slug); }
   catch { return null; }
-  if (typeof board.source === 'string' && board.source.startsWith('jira://')) {
-    // v2 source; not implemented yet — surface it honestly rather than pretending.
-    return { name: board.name || slug, visibility: board.visibility || 'private', source: board.source,
-             _sourceStub: 'jira', children: [] };
-  }
-  const process = async node => {
+  const ro = typeof board.source === 'string' && board.source.startsWith('jira://');
+  const build = async (node, path) => {
     if (node.include !== undefined) {
-      const inc = await resolveBoard(node.include, [...chain, slug]);
-      const cyc = !inc || inc.__cycle;
-      const summary = cyc ? 0 : computeHeat({ children: inc.children || [] });
+      const sub = await resolveBoard(node.include, [...chain, slug]);
+      const cyc = !sub || sub.__cycle;
       return { id: node.id, name: node.name || humanize(node.include), weight: node.weight,
-               _include: node.include, _summaryHeat: summary, _missing: !inc || undefined, _cycle: inc && inc.__cycle || undefined };
+               _board: slug, _path: path, _boardLink: node.include,      // boundary: this node lives in THIS board
+               _missing: !sub || undefined, _cycle: (sub && sub.__cycle) || undefined,
+               children: cyc ? [] : (sub.children || []) };              // children carry the sub-board's own stamps
     }
+    const out = { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, _board: slug, _path: path };
+    if (ro) out._ro = true;
     if (node.children && node.children.length) {
-      const kids = [];
-      for (const c of node.children) kids.push(await process(c));
-      return { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, children: kids };
+      out.children = [];
+      for (const c of node.children) out.children.push(await build(c, path ? path + '.' + c.id : c.id));
     }
-    return { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note };
+    return out;
   };
   const children = [];
-  for (const c of (board.children || [])) children.push(await process(c));
-  return { name: board.name || slug, visibility: board.visibility || 'private', source: board.source || 'native', children };
+  for (const c of (board.children || [])) children.push(await build(c, c.id));
+  const tree = { name: board.name || slug, visibility: board.visibility || 'private',
+                 source: board.source || 'native', _board: slug, _path: '', children };
+  if (ro) tree._sourceStub = 'jira';
+  return tree;
 }
 
 // ---- resolve a dotted-id path in a board (node must exist) ----
@@ -239,10 +236,78 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === 'POST' && p === '/api/node') {   // HUMAN: add an inline item OR a nested board
+    if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
+    try {
+      const { board: slug, path = '', kind = 'item', name } = await body(req);
+      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
+      if (!name || !String(name).trim()) return json(res, 400, { error: 'missing name' });
+      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
+      const board = await readBoard(slug);
+      if (typeof board.source === 'string' && board.source.startsWith('jira://'))
+        return json(res, 409, { error: 'board is a read-only jira source' });
+      const parent = path ? resolvePath(board, path) : board;   // no path => board root
+      if (!parent) return json(res, 404, { error: 'path not found: ' + path });
+      const kids = parent.children || (parent.children = []);
+      const taken = new Set(kids.map(c => c.id));
+      const nm = String(name).trim();
+      if (kind === 'native') {                                   // new sub-board file + an include node here
+        const existing = new Set((await listBoards()).map(b => b.slug));
+        const newSlug = uniq(slugify(nm), existing);
+        await writeBoard(newSlug, { name: nm, visibility: 'private', source: 'native', children: [] });
+        kids.push({ id: uniq(newSlug, taken), name: nm, weight: 1, include: newSlug });
+      } else {                                                   // inline item: a leaf (becomes a group if you add into it)
+        kids.push({ id: uniq(slugify(nm), taken), name: nm, weight: 1, status: 'todo' });
+      }
+      await writeBoard(slug, board); broadcast();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: String(e) }); }
+    return;
+  }
+  if (req.method === 'PATCH' && p === '/api/node') {   // HUMAN: rename (display name; id is stable)
+    if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
+    try {
+      const { board: slug, path, name } = await body(req);
+      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
+      if (!path || !name || !String(name).trim()) return json(res, 400, { error: 'missing path or name' });
+      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
+      const board = await readBoard(slug);
+      const node = resolvePath(board, path);
+      if (!node) return json(res, 404, { error: 'path not found: ' + path });
+      node.name = String(name).trim();
+      await writeBoard(slug, board); broadcast();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: String(e) }); }
+    return;
+  }
+  if (req.method === 'DELETE' && p === '/api/node') {   // HUMAN: remove a node (leaves any referenced board file intact)
+    if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
+    try {
+      const { board: slug, path } = await body(req);
+      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
+      if (!path) return json(res, 400, { error: 'missing path' });
+      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
+      const board = await readBoard(slug);
+      const parts = path.split('.'); const id = parts.pop();
+      const parent = parts.length ? resolvePath(board, parts.join('.')) : board;
+      if (!parent || !parent.children) return json(res, 404, { error: 'path not found: ' + path });
+      const before = parent.children.length;
+      parent.children = parent.children.filter(c => c.id !== id);
+      if (parent.children.length === before) return json(res, 404, { error: 'path not found: ' + path });
+      await writeBoard(slug, board); broadcast();
+      json(res, 200, { ok: true });
+    } catch (e) { json(res, 400, { error: String(e) }); }
+    return;
+  }
+
   json(res, 404, { error: 'not found' });
 });
 
 await mkdir(BOARDS, { recursive: true }).catch(() => {});
+// first run: seed a home board so a fresh `tilemon ./boards` isn't an empty void
+if ((await listBoards()).length === 0) {
+  await writeBoard('my-board', { name: 'My board', visibility: 'private', source: 'native', children: [] });
+}
 server.listen(PORT, async () => {
   const boards = await listBoards();
   console.log(`Tilemon serving ${BOARDS}  (${boards.length} board${boards.length === 1 ? '' : 's'})`);

@@ -72,6 +72,12 @@ because it *can't* reach weight or structure.
 - **Upsert:** `POST /api/status` creates the board and any missing path nodes (born small)
   so agents populate an empty board from scratch. `POST /api/weight` requires the node to
   exist (humans lay out weight; agents don't create structure they can't already reach).
+- **Human structure surface:** `POST /api/node {kind:item|native}` adds an inline item or a
+  nested native board (creates the sub-board file + an include node in one gesture); `PATCH`
+  renames; `DELETE` removes a node (referenced board file left intact). Fresh dirs auto-seed
+  a `my-board` home board. This is the "add (item | native board), rename, delete" UI —
+  agents own status/note, humans own structure + weight. Jira as an add-type is deferred
+  (source still stubbed).
 
 ## Vocabulary
 
@@ -117,5 +123,6 @@ Playwright. Eyeball the actual board in a real browser when iterating on visuals
 - **Reply channel** (board→agent): `POST /api/reply` + agent polls its inbox — the "action
   the things" half. Deliberately deferred.
 - **v2: Jira as a read-only second source** — the `jira://` board type is stubbed; wire the
-  adapter (FO project; weight kept in a Tilemon sidecar keyed by ticket id). See SPEC §5.
+  adapter (FO project; weight kept in a Tilemon sidecar keyed by ticket id) and add it as an
+  `add`-type in the UI once the source is real. See SPEC §5.
 - Agent-facing Claude Code skill / install flow (`npx tilemon ./.tilemon`) — design only.

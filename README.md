@@ -12,7 +12,9 @@ npx tilemon ./boards
 directory of JSON boards. Point an always-on monitor at it. Agents flag status over HTTP
 (and can populate an empty board from scratch); you own the weights by dragging tiles.
 
-Start empty — agents create boards and tasks as they report — or run the bundled demo:
+A fresh run seeds one empty **home board** for you. From there you either **add** things
+yourself (in the top bar: an inline *item*, or a nested *board* with its own tasks; plus
+rename/delete), or let **agents** populate it. Or run the bundled demo:
 
 ```
 npm run demo        # serves ./examples/boards (a native board + a mounted one + a Jira stub)
@@ -86,6 +88,9 @@ Edit a board file directly and it live-updates — the server watches the direct
 | `GET /api/events` | — | Server-Sent Events; `change` on any write |
 | `POST /api/status` | **agents** | `{board, path, status, note?, name?}` — upsert; status/note only |
 | `POST /api/weight` | **you / UI** | `{board, path, weight}` — weight only, node must exist |
+| `POST /api/node` | **you / UI** | `{board, path, kind, name}` — add an inline item (`item`) or a nested board (`native`) |
+| `PATCH /api/node` | **you / UI** | `{board, path, name}` — rename |
+| `DELETE /api/node` | **you / UI** | `{board, path}` — remove a node (a referenced board file is left intact) |
 
 Set `TILEMON_TOKEN` to require `Authorization: Bearer <token>` on the write routes
 before exposing the port beyond a trusted network.
