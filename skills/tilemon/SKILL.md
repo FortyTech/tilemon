@@ -12,8 +12,12 @@ register your own work as you go.
 
 ## Reporting status (the core — this is 95% of it)
 
-1. **Find the board.** Use `$TILEMON_URL`, else `http://localhost:4000`. If nothing answers
-   there, the board isn't running — tell the human, don't guess.
+1. **Find the board.** Use `$TILEMON_URL`, else `http://localhost:4000`. If nothing answers,
+   start it detached with `npx tilemon --daemon` (it outlives your session; `--stop` kills it),
+   wait for it to come up, then proceed. **Never read TileMon's own source to work out how to run
+   it** — this skill is the complete manual; treat the server as a black box behind the API.
+   (TileMon may itself be one of the projects on the board — that's fine; just don't crack open
+   its implementation to operate it.)
 2. **Address your work.** `board` = the project's slug (usually the repo/project name).
    `path` = a stable, dotted id for your task within that board, e.g. `api.refactor-auth`.
    **Reuse the same board + path across a task's whole life** — that's how a reconnecting agent
@@ -54,14 +58,19 @@ group these?" from nothing.
 
 The loop:
 
-1. **Survey and mine every grouping signal** so the first draft is ~80% right and the human is
-   *editing*, not authoring. In priority order: an explicit tag (a manifest `group:` field),
-   then directory structure (nested folders → nested groups), then a categorised doc (e.g. a
-   project index in a `CLAUDE.md`). For a first-cut at **weight**, lean on activity/recency —
-   but say you've done so; it's a guess for them to correct.
-2. **Propose a concrete strawman**, not questions: a board per project (or sub-project) grouped
-   into a few named, weighted buckets. Show it, and only ask where the draft is *genuinely*
-   ambiguous ("these five could be their own bucket or fold into Products — which?").
+0. **Ensure the board is running** (see step 1 of "Reporting status" — `npx tilemon --daemon` if
+   nothing answers on `:4000`). Setup builds *through the live API*, so the server must be up
+   first; do this before surveying so you're never blocked halfway.
+1. **Survey the workspace and mine every grouping signal** so the first draft is ~80% right and
+   the human is *editing*, not authoring. In priority order: an explicit tag (a manifest `group:`
+   field), then directory structure (nested folders → nested groups), then a categorised doc
+   (e.g. a project index in a `CLAUDE.md`). Survey the *workspace's own* signals — never TileMon's
+   source. For a first-cut at **weight**, lean on activity/recency — but say you've done so; it's
+   a guess for them to correct.
+2. **Propose a concrete strawman in prose, and invite free-text corrections** ("move X, split Y,
+   drop Z") — a board per project grouped into a few named, weighted buckets. Reacting to a
+   written draft is lower-friction than multiple-choice prompts, so prefer it; reserve a formal
+   question for a *genuine* either/or blocker, not for things you can just propose a default for.
 3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
    by writing files. The server live-reloads, so the human watches the board fill in as you go.
 

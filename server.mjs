@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // TileMon — multi-board file-source server. Zero external deps; Node 18+ built-ins only.
 //
-//   npx tilemon                          # serves ./.tilemon (created on first run)
+//   npx tilemon                          # serves ./.tilemon in the foreground (created on first run)
 //   npx tilemon ./boards                 # or point it at any folder
+//   npx tilemon --daemon                 # start detached (survives this shell/agent); --stop to kill it
 //   PORT=4000 TILEMON_TOKEN=secret node server.mjs ./.tilemon
 //
 // A boards directory holds one <slug>.json per board:
@@ -29,16 +30,48 @@
 // TILEMON_TOKEN is set, every write route requires `Authorization: Bearer <token>`.
 
 import http from 'node:http';
+import net from 'node:net';
+import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const BOARDS = process.argv[2] || './.tilemon';   // a hidden folder of <slug>.json boards
+const argv = process.argv.slice(2);
+const hasFlag = f => argv.includes(f);
+const BOARDS = argv.find(a => !a.startsWith('-')) || './.tilemon';   // a hidden folder of <slug>.json boards
 const PORT   = Number(process.env.PORT) || 4000;
 const TOKEN  = process.env.TILEMON_TOKEN || null;
 const DASH   = join(__dir, 'dashboard.html');
+const PIDFILE = join(BOARDS, '.server.pid');
+
+// ---- background mode (zero-dep, cross-platform via Node's own detached spawn) ----
+// Is something already listening on PORT? (a quick TCP probe; no HTTP needed)
+const portUp = () => new Promise(r => {
+  const s = net.connect({ port: PORT, host: '127.0.0.1' });
+  s.once('connect', () => { s.destroy(); r(true); });
+  s.once('error', () => r(false));
+  s.setTimeout(400, () => { s.destroy(); r(false); });
+});
+// `--stop`: terminate the backgrounded server recorded in the pidfile
+if (hasFlag('--stop')) {
+  try { const pid = Number(await readFile(PIDFILE, 'utf8')); process.kill(pid); console.log(`TileMon stopped (pid ${pid})`); }
+  catch { console.log('no running TileMon found for ' + BOARDS); }
+  process.exit(0);
+}
+// `--daemon`/`-d`: spawn a DETACHED server that outlives this process — and any agent that launched it
+if (hasFlag('--daemon') || hasFlag('-d')) {
+  if (await portUp()) { console.log(`TileMon already running at http://localhost:${PORT}`); process.exit(0); }
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), BOARDS],
+    { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
+  child.unref();
+  for (let i = 0; i < 40 && !(await portUp()); i++) await new Promise(r => setTimeout(r, 150));
+  if (!(await portUp())) { console.log('TileMon did not come up — run `npx tilemon` in the foreground to see the error.'); process.exit(1); }
+  console.log(`TileMon started in the background at http://localhost:${PORT}`);
+  console.log('  stop it with:  npx tilemon --stop');
+  process.exit(0);
+}
 
 const VALID_STATUS = new Set(['todo', 'in_progress', 'blocked', 'done']);
 const STATUS_HEAT = { todo: 0, in_progress: 0.5, blocked: 1 }; // done -> treated as 0 for summary
@@ -418,6 +451,8 @@ if ((await listBoards()).length === 0) {
     { id: 'yours', name: 'Delete these and make it yours', weight: 1, status: 'todo' },
   ] });
 }
+await writeFile(PIDFILE, String(process.pid)).catch(() => {});   // so `--stop` can find us (foreground or backgrounded)
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { try { unlinkSync(PIDFILE); } catch {} process.exit(0); });
 server.listen(PORT, async () => {
   const boards = await listBoards();
   console.log(`TileMon serving ${BOARDS}  (${boards.length} board${boards.length === 1 ? '' : 's'})`);
