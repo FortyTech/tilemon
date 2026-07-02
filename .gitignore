@@ -2,6 +2,7 @@ node_modules/
 *.tmp
 state.*.tmp
 # personal boards — keep the samples + fixture, ignore real ones
+/.tilemon/
 /boards/
 state.local.json
 state.live.json

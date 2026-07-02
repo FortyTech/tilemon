@@ -5,11 +5,11 @@
   "type": "module",
   "bin": { "tilemon": "server.mjs" },
   "scripts": {
-    "start": "node server.mjs ./boards",
+    "start": "node server.mjs",
     "demo": "node server.mjs ./examples/boards",
     "test": "node test/board.test.mjs"
   },
   "engines": { "node": ">=18" },
-  "files": ["server.mjs", "dashboard.html", "board.js", "examples"],
+  "files": ["server.mjs", "dashboard.html", "board.js", "examples", "skills"],
   "license": "MIT"
 }
