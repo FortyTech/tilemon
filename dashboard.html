@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tilemon</title>
+<title>TileMon</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
@@ -44,8 +44,9 @@ async function getState(s) {
 async function send(method, path, body) {
   try {
     const r = await fetch(path, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) console.error(method, path, '->', r.status, await r.text());
-  } catch (e) { console.error(method, path, 'failed', e); }
+    if (!r.ok) { console.error(method, path, '->', r.status, await r.text()); return null; }
+    return await r.json().catch(() => ({}));
+  } catch (e) { console.error(method, path, 'failed', e); return null; }
 }
 
 // writes carry the OWNING board of the node (stamped by the server) — so edits land on the
@@ -53,11 +54,17 @@ async function send(method, path, body) {
 const onStatusChange = (b, path, status) => send('POST', '/api/status', { board: b, path, status });
 const onWeightChange = (b, path, weight) => send('POST', '/api/weight', { board: b, path, weight });
 const onAddNode = (b, path, kind, name) => send('POST', '/api/node', { board: b, path, kind, name });
+// "add a nested board" = create a bare board, then include it here (two clean primitives).
+const onAddBoard = async (b, path, name) => {
+  const made = await send('POST', '/api/board', { name });
+  if (made && made.slug) await send('POST', '/api/node', { board: b, path, kind: 'include', target: made.slug });
+};
+const onMoveNode = (b, path, toBoard, toPath) => send('POST', '/api/move', { board: b, path, toBoard, toPath });
 const onRenameNode = (b, path, name) => send('PATCH', '/api/node', { board: b, path, name });
 const onDeleteNode = (b, path) => send('DELETE', '/api/node', { board: b, path });
 const onSetToolbar = (b, path, toolbar) => send('PATCH', '/api/node', { board: b, path, toolbar });
 const openBoard = s => { history.pushState({ slug: s }, '', '/boards/' + s); load(s); };
-const cbs = { onStatusChange, onWeightChange, onAddNode, onRenameNode, onDeleteNode, onSetToolbar, onOpenBoard: openBoard };
+const cbs = { onStatusChange, onWeightChange, onAddNode, onAddBoard, onMoveNode, onRenameNode, onDeleteNode, onSetToolbar, onOpenBoard: openBoard };
 
 async function load(s) {
   slug = s;
