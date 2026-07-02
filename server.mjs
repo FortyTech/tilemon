@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Tilemon — multi-board file-source server. Zero external deps; Node 18+ built-ins only.
 //
-//   node server.mjs ./boards            # or: npx tilemon ./boards
-//   PORT=4000 TILEMON_TOKEN=secret node server.mjs ./boards
+//   npx tilemon                          # serves ./.tilemon (created on first run)
+//   npx tilemon ./boards                 # or point it at any folder
+//   PORT=4000 TILEMON_TOKEN=secret node server.mjs ./.tilemon
 //
 // A boards directory holds one <slug>.json per board:
 //   { "name": "...", "visibility": "private", "source": "native", "children": [ ... ] }
@@ -27,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const BOARDS = process.argv[2] || './boards';
+const BOARDS = process.argv[2] || './.tilemon';   // a hidden folder of <slug>.json boards
 const PORT   = Number(process.env.PORT) || 4000;
 const TOKEN  = process.env.TILEMON_TOKEN || null;
 const DASH   = join(__dir, 'dashboard.html');

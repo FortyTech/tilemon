@@ -104,8 +104,8 @@ handover, so SPEC.md stays the original record:
 
 ```bash
 npm run demo                          # serve ./examples/boards  (http://localhost:4000)
-npm start                             # serve ./boards (created empty; agents populate it)
-TILEMON_TOKEN=secret node server.mjs ./boards   # auth on writes
+npm start                             # serve ./.tilemon (default; created + seeded on first run)
+TILEMON_TOKEN=secret node server.mjs ./.tilemon   # auth on writes
 node examples/agent.mjs webapp api.refactor-auth  # toy agent walks a job through the lifecycle
 npm test                              # headless; no browser required
 ```

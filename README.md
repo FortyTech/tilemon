@@ -5,11 +5,11 @@ thing bigger shrinks everything else — a zero-sum map that won't let you prete
 things are all urgent. Hand tasks to your agents; when one gets stuck, it glows.
 
 ```
-npx tilemon ./boards
+npx tilemon           # serves ./.tilemon (created on first run); or: npx tilemon ./some-dir
 ```
 
 …boots a local server, serves the board at `http://localhost:4000`, and reads/writes a
-directory of JSON boards. Point an always-on monitor at it. Agents flag status over HTTP
+directory of JSON boards (default `./.tilemon`). Point an always-on monitor at it. Agents flag status over HTTP
 (and can populate an empty board from scratch); you own the weights by dragging tiles.
 
 A fresh run seeds one empty **home board** for you. From there you either **add** things
@@ -39,7 +39,16 @@ npm run demo        # serves ./examples/boards (a native board + a mounted one +
 
 ## How agents update it
 
-One POST, scoped to a board. It **upserts** — if the board or the node doesn't exist yet,
+To let your coding agent feed the board unprompted, install the skill:
+
+```
+npx skills add FortyTech/tilemon        # into this project's ./.claude/skills/
+npx skills add -g FortyTech/tilemon     # or globally, for every project
+```
+
+The skill teaches the agent *when* to flag (block/finish) and how to bootstrap a board — but
+it's not required: any agent told "there's a Tilemon board at localhost:4000" can use the API
+directly. The whole integration is one POST, scoped to a board. It **upserts** — if the board or the node doesn't exist yet,
 it's created (born small) — and it can *only* set status/note, never your weights or
 structure (a different endpoint, with no access to weight).
 
