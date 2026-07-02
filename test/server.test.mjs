@@ -88,6 +88,22 @@ try {
   // cross-board: moving the word-duel include INTO the word-duel board would self-reference -> reject
   ok((await api('POST', '/api/move', { board: 'tilemon', path: 'games.tools-group', toBoard: 'word-duel', toPath: '' })).status === 409, 'cross-board move creating a cycle rejected');
 
+  // --- daemon mode: a detached server survives the launcher exiting; --stop kills it ---
+  {
+    const dir2 = await mkdtemp(join(tmpdir(), 'tilemon-d-'));
+    const P2 = 47824;
+    const runCli = extra => new Promise(r => spawn('node', [SERVER, ...extra, dir2], { env: { ...process.env, PORT: String(P2) }, stdio: 'ignore' }).on('exit', c => r(c)));
+    const up2 = () => fetch(`http://localhost:${P2}/api/boards`).then(() => true).catch(() => false);
+    await runCli(['--daemon']);                 // launcher backgrounds a child, then exits
+    ok(await up2(), 'daemon server reachable after its launcher exited');
+    await runCli(['--daemon']);                 // idempotent: no second server, no crash
+    ok(await up2(), 'second --daemon is a no-op (already running)');
+    await runCli(['--stop']);
+    for (let i = 0; i < 20 && await up2(); i++) await new Promise(r => setTimeout(r, 100));
+    ok(!(await up2()), 'daemon server stops on --stop');
+    await rm(dir2, { recursive: true, force: true });
+  }
+
 } finally {
   child.kill();
   await rm(dir, { recursive: true, force: true });

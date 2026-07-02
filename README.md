@@ -12,6 +12,17 @@ npx tilemon           # serves ./.tilemon (created on first run); or: npx tilemo
 directory of JSON boards (default `./.tilemon`). Point an always-on monitor at it. Agents flag status over HTTP
 (and can populate an empty board from scratch); you own the weights by dragging tiles.
 
+Run it detached so it outlives the terminal (or the agent) that started it — no extra tooling,
+just Node:
+
+```
+npx tilemon --daemon    # start in the background (survives this shell); --stop to kill it
+npx tilemon --stop      # stop the backgrounded server
+```
+
+Want it back after a reboot? That's your OS's job, not the tool's — add `npx tilemon --daemon`
+to your startup (Login Items on macOS, a systemd user unit on Linux, Task Scheduler on Windows).
+
 A fresh run seeds one empty **home board** for you. From there you either **add** things
 yourself (in the top bar: an inline *item*, or a nested *board* with its own tasks; plus
 rename/delete), or let **agents** populate it. Or run the bundled demo:
