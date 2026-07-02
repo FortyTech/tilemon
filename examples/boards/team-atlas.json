@@ -1,9 +1,0 @@
-{
-  "name": "Team Atlas",
-  "visibility": "public",
-  "source": "native",
-  "children": [
-    { "id": "data-migration", "name": "Data migration", "weight": 2, "status": "blocked", "note": "waiting on external sign-off", "agent": "atlas-agent" },
-    { "id": "onboarding", "name": "Onboarding flow", "weight": 1, "status": "in_progress" }
-  ]
-}

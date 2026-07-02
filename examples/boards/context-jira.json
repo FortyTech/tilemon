@@ -1,0 +1,5 @@
+{
+  "name": "Context C",
+  "visibility": "private",
+  "source": "jira://EXAMPLE"
+}

@@ -3,52 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Tilemon — priority board</title>
+<title>Tilemon</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root{--tlm-bg:#14120D;--tlm-ink:#ECE7DA;--tlm-dim:#9A9182;--tlm-line:#2A2820;--tlm-gold:#E8C56A;--tlm-panel:#1C1A14}
   *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--tlm-bg);color:var(--tlm-ink);
+  html,body{margin:0;height:100%;overflow:hidden;background:var(--tlm-bg);color:var(--tlm-ink);
     font-family:"Space Grotesk",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
-  #app{display:flex;flex-direction:column;height:100vh;padding:14px;gap:10px}
-  #topbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  #topbar .brand{font-weight:600;letter-spacing:.02em}
-  #topbar .brand .dim{color:var(--tlm-dim);font-weight:400}
-  #boardSel{margin-left:auto;font-family:"Space Mono",monospace;font-size:12px;background:var(--tlm-panel);color:var(--tlm-ink);
-    border:1px solid var(--tlm-line);border-radius:6px;padding:5px 8px}
-  #board{flex:1;min-height:340px;border-radius:10px}
-  #empty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--tlm-dim);
+  /* full-page app: the whole window is the board (which draws its own toolbar/status as the frame's header/footer) */
+  #board{position:fixed;inset:0}
+  #empty{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--tlm-dim);
     font-family:"Space Mono",monospace;font-size:13px;line-height:1.7}
-  .hint{font-family:"Space Mono",monospace;font-size:10.5px;color:var(--tlm-dim);line-height:1.5}
-  .hint .off{color:#b0563a}
 </style>
 </head>
 <body>
-<div id="app">
-  <div id="topbar">
-    <span class="brand">Tilemon <span class="dim" id="boardName"></span></span>
-    <select id="boardSel" title="switch board"></select>
-  </div>
-  <div id="controls"></div>
-  <div id="board"></div>
-  <div class="hint" id="hint">drag = resize the item it belongs to · click an item to arm it, then drags resize the items inside · double-click = drill in (or open an included board) · click any tile to set its status</div>
-</div>
+<div id="board"></div>
 
 <script type="module">
 // dashboard.html — the multi-board FILE source adapter. It owns "where the data lives":
-// reads /api/state?board=<slug>, writes back board-scoped POSTs, live-refreshes over SSE,
-// and routes between boards by URL (/boards/<slug>). The renderer (board.js) knows none of
-// this — swap this layer for a DB-backed host and the renderer is unchanged. See SPEC §3.
+// reads /api/state?board=<slug>, writes board-scoped requests, live-refreshes over SSE, and
+// routes between boards by URL. All chrome (toolbar/status/switcher) is drawn by the renderer
+// as the frame tile's own header/footer — this file is just the data seam. See SPEC §3.
 import { mount } from './board.js';
 
 const boardEl = document.getElementById('board');
-const controlsEl = document.getElementById('controls');
-const hint = document.getElementById('hint');
-const sel = document.getElementById('boardSel');
-const nameEl = document.getElementById('boardName');
-
 let slug = null, board = null;
 
 const slugFromUrl = () => {
@@ -70,54 +50,44 @@ async function send(method, path, body) {
 
 // writes carry the OWNING board of the node (stamped by the server) — so edits land on the
 // right board even when a nested board is inlined into the one you're viewing.
-const onStatusChange = (board, path, status) => send('POST', '/api/status', { board, path, status });
-const onWeightChange = (board, path, weight) => send('POST', '/api/weight', { board, path, weight });
-const onAddNode = (board, path, kind, name) => send('POST', '/api/node', { board, path, kind, name });
-const onRenameNode = (board, path, name) => send('PATCH', '/api/node', { board, path, name });
-const onDeleteNode = (board, path) => send('DELETE', '/api/node', { board, path });
+const onStatusChange = (b, path, status) => send('POST', '/api/status', { board: b, path, status });
+const onWeightChange = (b, path, weight) => send('POST', '/api/weight', { board: b, path, weight });
+const onAddNode = (b, path, kind, name) => send('POST', '/api/node', { board: b, path, kind, name });
+const onRenameNode = (b, path, name) => send('PATCH', '/api/node', { board: b, path, name });
+const onDeleteNode = (b, path) => send('DELETE', '/api/node', { board: b, path });
+const onSetToolbar = (b, path, toolbar) => send('PATCH', '/api/node', { board: b, path, toolbar });
 const openBoard = s => { history.pushState({ slug: s }, '', '/boards/' + s); load(s); };
-
-async function refreshSwitcher() {
-  const boards = await listBoards();
-  sel.innerHTML = boards.map(b => `<option value="${b.slug}"${b.slug === slug ? ' selected' : ''}>${b.name}${b.visibility === 'public' ? ' (public)' : ''}</option>`).join('');
-}
+const cbs = { onStatusChange, onWeightChange, onAddNode, onRenameNode, onDeleteNode, onSetToolbar, onOpenBoard: openBoard };
 
 async function load(s) {
   slug = s;
+  const list = await listBoards();
   try {
     const state = await getState(s);
     document.getElementById('empty')?.remove();
     boardEl.style.display = '';
-    nameEl.textContent = '· ' + (state.name || s);
-    if (!board) board = mount(boardEl, controlsEl, { state, onWeightChange, onStatusChange, onOpenBoard: openBoard, onAddNode, onRenameNode, onDeleteNode });
-    else board.update(state);
+    if (!board) board = mount(boardEl, null, { state, boards: list, ...cbs });
+    else { board.update(state); board.setBoards(list); }
   } catch (e) {
     console.error(e);
     boardEl.style.display = 'none';
-    if (!document.getElementById('empty')) boardEl.insertAdjacentHTML('afterend', `<div id="empty">board "${s}" not found</div>`);
+    if (!document.getElementById('empty')) boardEl.insertAdjacentHTML('afterend', `<div id="empty">board “${s}” not found</div>`);
   }
-  refreshSwitcher();
 }
 
-// pick the starting board: URL slug, else the home board / first writable one (never a
-// read-only stub), else an empty-state prompt.
-const pick = bs => (bs.find(b => b.slug === 'my-board') || bs.find(b => b.source === 'native') || bs[0] || {}).slug;
+// starting board: URL slug, else the home shell / first native board, else empty-state prompt.
+const pick = bs => (bs.find(b => b.slug === 'tilemon') || bs.find(b => b.toolbar !== false && b.source === 'native') || bs.find(b => b.source === 'native') || bs[0] || {}).slug;
 const boards = await listBoards();
 const start = slugFromUrl() || pick(boards);
 if (start) load(start);
-else {
-  boardEl.style.display = 'none';
-  boardEl.insertAdjacentHTML('afterend', `<div id="empty">No boards yet.<br>An agent creates one by POSTing a status:<br><br>node examples/agent.mjs</div>`);
-}
+else { boardEl.style.display = 'none'; boardEl.insertAdjacentHTML('afterend', `<div id="empty">No boards yet.<br>Run an agent (node examples/agent.mjs) to populate one.</div>`); }
 
-sel.onchange = () => openBoard(sel.value);
 window.onpopstate = () => { const s = slugFromUrl() || pick(boards); if (s) load(s); };
 
-// Live refresh over SSE: any write (ours, another tab, an agent, a direct file edit) pushes
-// a change; we re-fetch the current board. board.js preserves drill/selection, ignores mid-drag.
+// Live refresh over SSE: any write (ours, another tab, an agent, a direct file edit) pushes a
+// change; we re-fetch the current board. board.js preserves drill/selection, ignores mid-drag.
 const es = new EventSource('/api/events');
-es.onmessage = async () => { if (!slug) { const b = await listBoards(); const s = pick(b); if (s) load(s); return; } try { board && board.update(await getState(slug)); } catch (e) { console.error(e); } };
-es.onerror = () => { hint.innerHTML = '<span class="off">live updates disconnected — reconnecting…</span>'; };
+es.onmessage = async () => { if (!slug) { const s = pick(await listBoards()); if (s) load(s); return; } try { board && board.update(await getState(slug)); } catch (e) { console.error(e); } };
 </script>
 </body>
 </html>

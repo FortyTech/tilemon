@@ -1,0 +1,9 @@
+{
+  "name": "Context B",
+  "visibility": "public",
+  "source": "native",
+  "children": [
+    { "id": "task-1", "name": "Task in Context B", "weight": 2, "status": "in_progress" },
+    { "id": "task-2", "name": "Task — blocked (its heat rolls up to Context B)", "weight": 1, "status": "blocked", "note": "A blocked task deep inside makes its container glow from the outside." }
+  ]
+}

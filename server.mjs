@@ -68,7 +68,7 @@ async function listBoards() {
   const out = [];
   for (const f of files) {
     const slug = f.slice(0, -5);
-    try { const b = await readBoard(slug); out.push({ slug, name: b.name || slug, visibility: b.visibility || 'private', source: b.source || 'native' }); }
+    try { const b = await readBoard(slug); out.push({ slug, name: b.name || slug, visibility: b.visibility || 'private', source: b.source || 'native', toolbar: !!b.toolbar }); }
     catch { /* skip unreadable */ }
   }
   return out;
@@ -92,6 +92,7 @@ async function resolveBoard(slug, chain = []) {
       const cyc = !sub || sub.__cycle;
       return { id: node.id, name: node.name || humanize(node.include), weight: node.weight,
                _board: slug, _path: path, _boardLink: node.include,      // boundary: this node lives in THIS board
+               toolbar: (!cyc && sub) ? sub.toolbar : undefined,          // pass the sub-board's shell flag through
                _missing: !sub || undefined, _cycle: (sub && sub.__cycle) || undefined,
                children: cyc ? [] : (sub.children || []) };              // children carry the sub-board's own stamps
     }
@@ -107,6 +108,7 @@ async function resolveBoard(slug, chain = []) {
   for (const c of (board.children || [])) children.push(await build(c, c.id));
   const tree = { name: board.name || slug, visibility: board.visibility || 'private',
                  source: board.source || 'native', _board: slug, _path: '', children };
+  if (board.toolbar !== undefined) tree.toolbar = board.toolbar;   // app-shell flag (absent => shell; explicit false => bare)
   if (ro) tree._sourceStub = 'jira';
   return tree;
 }
@@ -264,17 +266,18 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
-  if (req.method === 'PATCH' && p === '/api/node') {   // HUMAN: rename (display name; id is stable)
+  if (req.method === 'PATCH' && p === '/api/node') {   // HUMAN: rename and/or set toolbar. Empty path => the board itself.
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
-      const { board: slug, path, name } = await body(req);
+      const { board: slug, path, name, toolbar } = await body(req);
       if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if (!path || !name || !String(name).trim()) return json(res, 400, { error: 'missing path or name' });
+      if ((name == null || !String(name).trim()) && typeof toolbar !== 'boolean') return json(res, 400, { error: 'nothing to change' });
       if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
       const board = await readBoard(slug);
-      const node = resolvePath(board, path);
+      const node = path ? resolvePath(board, path) : board;   // no path => the board (the "frame" tile)
       if (!node) return json(res, 404, { error: 'path not found: ' + path });
-      node.name = String(name).trim();
+      if (name != null && String(name).trim()) node.name = String(name).trim();
+      if (typeof toolbar === 'boolean') node.toolbar = toolbar;   // store explicitly (false = bare)
       await writeBoard(slug, board); broadcast();
       json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
@@ -304,9 +307,15 @@ const server = http.createServer(async (req, res) => {
 });
 
 await mkdir(BOARDS, { recursive: true }).catch(() => {});
-// first run: seed a home board so a fresh `tilemon ./boards` isn't an empty void
+// first run: seed a self-describing home board so a fresh `tilemon ./boards` teaches the model
 if ((await listBoards()).length === 0) {
-  await writeBoard('my-board', { name: 'My board', visibility: 'private', source: 'native', children: [] });
+  await writeBoard('tilemon', { name: 'Tilemon', visibility: 'private', source: 'native', toolbar: true, children: [
+    { id: 'welcome', name: 'Welcome — drag a tile to resize it, double-click to drill in', weight: 4, status: 'todo' },
+    { id: 'hover', name: 'Hover a tile for its actions (＋ rename ✕)', weight: 2, status: 'todo' },
+    { id: 'blocked', name: 'Blocked items glow — like this one', weight: 2, status: 'blocked' },
+    { id: 'agents', name: 'Agents fill boards by POSTing status (see examples/agent.mjs)', weight: 1, status: 'in_progress' },
+    { id: 'yours', name: 'Delete these and make it yours', weight: 1, status: 'todo' },
+  ] });
 }
 server.listen(PORT, async () => {
   const boards = await listBoards();

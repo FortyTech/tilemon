@@ -1,0 +1,25 @@
+{
+  "name": "Tilemon",
+  "visibility": "private",
+  "source": "native",
+  "toolbar": true,
+  "children": [
+    { "id": "important-a", "name": "Important item A — big tiles matter more", "weight": 4, "status": "in_progress" },
+    { "id": "blocked-b", "name": "Item B — blocked items glow (hover for the note)", "weight": 2, "status": "blocked", "note": "This is an agent's note. Blocked = it needs you." },
+    { "id": "todo-c", "name": "Item C — a plain to-do", "weight": 1, "status": "todo" },
+    { "id": "minor-d", "name": "Minor item D — small tiles matter less", "weight": 1, "status": "todo" },
+    { "id": "done-e", "name": "Item E — done (green); toggle ‘done’ in the toolbar to hide these", "weight": 1, "status": "done" },
+    {
+      "id": "group-a",
+      "name": "Group A — double-click to drill in",
+      "weight": 3,
+      "children": [
+        { "id": "sub-1", "name": "Sub-item 1", "weight": 2, "status": "todo" },
+        { "id": "sub-2", "name": "Sub-item 2 — blocked", "weight": 1, "status": "blocked" },
+        { "id": "sub-3", "name": "Sub-item 3", "weight": 1, "status": "in_progress" }
+      ]
+    },
+    { "id": "context-b", "name": "Context B — a nested board (double-click to enter)", "weight": 3, "include": "context-b" },
+    { "id": "context-c", "name": "Context C — a Jira source (read-only)", "weight": 1, "include": "context-jira" }
+  ]
+}
