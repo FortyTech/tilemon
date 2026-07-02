@@ -20,7 +20,17 @@ npx tilemon --daemon    # start in the background (survives this shell); --stop 
 npx tilemon --stop      # stop the backgrounded server
 ```
 
-Want it back after a reboot? That's your OS's job, not the tool's — add `npx tilemon --daemon`
+**One board across many local repos.** Run a single shared server instead of one per project:
+
+```
+npx tilemon --global --daemon   # serves ~/.tilemon; every local repo reports into this one board
+```
+
+Agents in any repo target `http://localhost:4000` by default, so they all land on the same board —
+just don't start a second server elsewhere. (Spanning *different machines* needs a hosted TileMon,
+which isn't built yet.)
+
+Want it back after a reboot? That's your OS's job, not the tool's — add `npx tilemon --global --daemon`
 to your startup (Login Items on macOS, a systemd user unit on Linux, Task Scheduler on Windows).
 
 A fresh run seeds one empty **home board** for you. From there you either **add** things

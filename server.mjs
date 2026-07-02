@@ -3,6 +3,8 @@
 //
 //   npx tilemon                          # serves ./.tilemon in the foreground (created on first run)
 //   npx tilemon ./boards                 # or point it at any folder
+//   npx tilemon --global                 # serves ~/.tilemon — one board shared by every local repo
+//   npx tilemon --global --daemon        # the usual portfolio setup: one detached, always-on board
 //   npx tilemon --daemon                 # start detached (survives this shell/agent); --stop to kill it
 //   PORT=4000 TILEMON_TOKEN=secret node server.mjs ./.tilemon
 //
@@ -36,11 +38,14 @@ import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/prom
 import { existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
-const BOARDS = argv.find(a => !a.startsWith('-')) || './.tilemon';   // a hidden folder of <slug>.json boards
+// boards dir: an explicit path wins; else --global => ~/.tilemon (one board shared by every local
+// repo), else ./.tilemon (per-project). A hidden folder of <slug>.json boards.
+const BOARDS = argv.find(a => !a.startsWith('-')) || (hasFlag('--global') ? join(homedir(), '.tilemon') : './.tilemon');
 const PORT   = Number(process.env.PORT) || 4000;
 const TOKEN  = process.env.TILEMON_TOKEN || null;
 const DASH   = join(__dir, 'dashboard.html');

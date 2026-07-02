@@ -61,6 +61,20 @@ reshuffle priorities, only flag and (via upsert) add.
   `Internal`) — a group tile that contains the project includes. Bucket weight = its importance
   (its size on screen).
 
+## One board across many repos (same machine)
+
+A board can span **multiple repos/workspaces on one machine** — you just run a single shared server
+instead of one per project:
+
+- **Run one global server**, not a per-repo `./.tilemon`: `npx tilemon --global --daemon` serves
+  `~/.tilemon`. Every agent, in *any* local repo, already targets `http://localhost:4000`, so they
+  all report into that one board. Don't start a second server in another repo — point them at this one.
+- **When setting up, survey every root the human names** (e.g. `~/forty-workspace`, `~/doefin-local`),
+  not just the current directory — a board per project across all of them. A **bucket per workspace**
+  is usually the natural top level.
+- **Different machines can't share a `localhost` board** — that needs a hosted TileMon (not yet
+  built). For now, one machine = one shared local board; treat cross-machine as out of scope and say so.
+
 ## Bootstrapping a project (setup)
 
 When asked to **set up TileMon for a project/workspace**, structure and importance are the
