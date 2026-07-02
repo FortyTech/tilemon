@@ -10,6 +10,18 @@ weights, and **agents set status**. Blocked work glows. Your entire integration 
 POST**, and it **upserts** (creates the board and any missing nodes on first write), so you can
 register your own work as you go.
 
+**It is a shared, long-running board — not this session's state.** The board runs as its own
+server (often started detached with `--daemon`, so it outlives any single session) and is written
+to by **many agents over time**: future sessions, agents on other projects, and unattended or
+scheduled ones — often at the same time. You are just one of those clients. So:
+- Your job is narrow: report the status of **your own** tracked tasks, by stable `path`. You are
+  **not** the board's owner or bookkeeper, and you are **not** tracking the other agents' work.
+- Don't try to hold the whole board in your head, poll it to "monitor" everything, or keep your
+  session alive to watch it. When you've reported, you can move on — the server persists and other
+  agents keep updating their own tiles. The **human** watches the board; agents just report into it.
+- Address by stable `board`+`path` so a *different* agent (or a later session) that resumes the
+  same task lands on the same tile instead of creating a duplicate.
+
 ## Reporting status (the core — this is 95% of it)
 
 1. **Find the board.** Use `$TILEMON_URL`, else `http://localhost:4000`. If nothing answers,
