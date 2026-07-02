@@ -1,11 +1,11 @@
-# Tilemon — Build Spec & Handover
+# TileMon — Build Spec & Handover
 
 > A priority board where **importance is space**. The canvas is fixed, so making one thing
 > bigger shrinks everything else — a zero-sum map that won't let you pretend ten things are
 > all urgent. Hand tasks to your agents; when one gets stuck, it glows. Scale your attention
 > sideways instead of drowning in a list.
 
-This document is a handover for building Tilemon for real (in Claude Code). It captures the
+This document is a handover for building TileMon for real (in Claude Code). It captures the
 finished **design model**, the **architecture**, a concrete **v1**, the **roadmap**, the
 **open decisions**, and ships a **proven reference renderer** plus a **server scaffold** so you
 start from working code, not a blank repo.
@@ -145,11 +145,11 @@ writeStatus(path, status)   -> OPTIONAL. A source may be read-only.
 That last word — *optional* — is the unlock. Sources come in two kinds, differing in exactly one
 way: **who owns the write path.**
 
-| Source type | Data lives in | Write path | Needs an Tilemon key? |
+| Source type | Data lives in | Write path | Needs a TileMon key? |
 |---|---|---|---|
-| **File** (v1) | a JSON file you host | Tilemon's own endpoint | **Yes** — agents POST status |
+| **File** (v1) | a JSON file you host | TileMon's own endpoint | **Yes** — agents POST status |
 | **Jira** (later) | Jira | Jira's own API (agent moves a ticket to Blocked) | **No** — read-only; Jira owns auth |
-| **Mounted board** (later) | another Tilemon instance | that instance | No (it owns its own) |
+| **Mounted board** (later) | another TileMon instance | that instance | No (it owns its own) |
 
 This is why the API-key machinery felt oversized earlier: it belongs to **one source type** (the
 self-hosted file/endpoint), not to the whole product. Read-only Jira needs *zero* new auth.
@@ -158,9 +158,9 @@ self-hosted file/endpoint), not to the whole product. Read-only Jira needs *zero
 
 Whatever the source, **weight is never stored in the source.** A weight is a property of a node's
 *position in your tree* (its share vs. its siblings, possibly under a synthetic parent the source
-knows nothing about) — not a property of the underlying ticket. Keep a weight map in Tilemon's
+knows nothing about) — not a property of the underlying ticket. Keep a weight map in TileMon's
 own layer, keyed by stable node id. (For the File source, weight just lives on the node in the
-file, which *is* your layer. For Jira, weight lives in Tilemon keyed by ticket id; Jira stays
+file, which *is* your layer. For Jira, weight lives in TileMon keyed by ticket id; Jira stays
 read-only.)
 
 ### Mounts = just another source
@@ -286,11 +286,11 @@ thrown away.
 - **v1 — the npx file-source tool.** This spec. Proves the agent loop end-to-end with minimal
   plumbing. Local, monitor-friendly, shareable.
 - **v2 — Jira as a second (read-only) source.** Adapter maps epic→story→subtask to the tree and
-  Jira status → Tilemon status. **Needs zero new auth on the write side** (Jira owns writes).
+  Jira status → TileMon status. **Needs zero new auth on the write side** (Jira owns writes).
   Weight lives in your layer keyed by ticket id. You already have Atlassian connected; one project
   (`FO`) is the test case — `state.forty.json` is that project, pre-converted.
 - **v3 — real push.** Swap polling/file-watch for webhooks/SSE from sources. Renderer unchanged.
-- **v4 — mounts.** Mount another Tilemon instance as a source (tree-of-trees; per-team boards
+- **v4 — mounts.** Mount another TileMon instance as a source (tree-of-trees; per-team boards
   under your master root). Heat rolls up across mounts for free.
 - **v5 — hosted multi-tenant (optional).** Next.js + Neon (Postgres) + Clerk. The Neon-backed
   store is just *another implementation of the source interface*; the renderer doesn't change.
@@ -346,7 +346,7 @@ monitor matters more than squareness, switch to fixed-order packing (one line �
 
 ## 8. Naming
 
-Working name: **Tilemon** (attention + tile) — names the *resource* the whole tool allocates
+Working name: **TileMon** (attention + tile) — names the *resource* the whole tool allocates
 (attention), is distinctive/ownable, and has headroom beyond "nag me about Jira." Runner-up for a
 purely-personal build: **Nagtile** (snappier, but names the nag layer, which is a feature on top,
 not the core). Other live candidates checked but not chosen: Heedtile, Mattertile, Priotile.

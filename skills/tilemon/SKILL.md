@@ -1,11 +1,11 @@
 ---
 name: tilemon
-description: Report task/agent status to a Tilemon priority board (todo/in_progress/blocked/done) so it shows live on the always-on board, and bootstrap boards for a project. Use when you start, block on, or finish a tracked task, or when asked to set up Tilemon for a project. Requires a running Tilemon server (npx tilemon).
+description: Report task/agent status to a TileMon priority board (todo/in_progress/blocked/done) so it shows live on the always-on board, and bootstrap boards for a project. Use when you start, block on, or finish a tracked task, or when asked to set up TileMon for a project. Requires a running TileMon server (npx tilemon).
 ---
 
-# Tilemon — report status to the board
+# TileMon — report status to the board
 
-Tilemon is a zero-sum treemap priority board: importance is on-screen area, the human owns the
+TileMon is a zero-sum treemap priority board: importance is on-screen area, the human owns the
 weights, and **agents set status**. Blocked work glows. Your entire integration is **one HTTP
 POST**, and it **upserts** (creates the board and any missing nodes on first write), so you can
 register your own work as you go.
@@ -47,7 +47,7 @@ reshuffle priorities, only flag and (via upsert) add.
 
 ## Bootstrapping a project (setup)
 
-When asked to **set up Tilemon for a project/workspace**, structure and importance are the
+When asked to **set up TileMon for a project/workspace**, structure and importance are the
 human's to decide — but don't make them author it cold. Run a **propose-first dialogue**: you
 draft, they react. Reacting to a wrong draft is far easier than answering "how do you want to
 group these?" from nothing.
@@ -62,37 +62,37 @@ The loop:
 2. **Propose a concrete strawman**, not questions: a board per project (or sub-project) grouped
    into a few named, weighted buckets. Show it, and only ask where the draft is *genuinely*
    ambiguous ("these five could be their own bucket or fold into Products — which?").
-3. **React → redraft → confirm.** Each round, rewrite the master board JSON directly — the
-   server watches the folder and live-reloads, so they literally watch buckets rearrange as you
-   talk. The **master board file is the wizard's state**; there is no side artifact and no
-   separate "commit" step — the moment they're happy, it's already done.
+3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
+   by writing files. The server live-reloads, so the human watches the board fill in as you go.
 
-Structure — `include` nodes, groups, weights — is human-owned and *not* creatable via
-`POST /api/status`, so you **author the JSON files directly** in the boards folder (default
-`./.tilemon/`):
-- `.tilemon/<slug>.json` per project (a `native` board; may start empty or seeded with items).
-- `.tilemon/tilemon.json` — the master/home board (`toolbar: true`), whose children are the
-  weighted **bucket groups**, each containing `include` nodes pointing at the project slugs.
+**Build it with the structure API — never hand-author the JSON.** Structure is human-owned and
+can't be created via `POST /api/status`; use the admin routes instead. The order is: create the
+project boards, make the buckets on the home board, then include the boards into their buckets,
+then set weights.
 
-Re-running reconciles: read the existing `tilemon.json` (respect the human's arrangement +
-weights) plus the current project list, and only **add what's missing** — never clobber. New
-projects drop into a sensible bucket or you ask where they go.
-
-A board file:
-```jsonc
-{ "name": "Portfolio", "toolbar": true, "source": "native", "children": [
-  { "id": "products", "name": "Products", "weight": 3, "children": [
-    { "id": "chessku", "name": "Chessku", "weight": 1, "include": "chessku" },
-    { "id": "eulogy",  "name": "EulogySong", "weight": 1, "include": "eulogy-song" } ] },
-  { "id": "internal", "name": "Internal", "weight": 1, "children": [
-    { "id": "scout", "name": "Client Scout", "weight": 1, "include": "client-scout" } ] }
-] }
+```bash
+U=${TILEMON_URL:-http://localhost:4000}
+# 1. a board per project (bare; returns its slug)
+curl -s -X POST $U/api/board -d '{"name":"Chessku","slug":"chessku"}'          # -> {"slug":"chessku"}
+curl -s -X POST $U/api/board -d '{"name":"EulogySong","slug":"eulogy-song"}'
+# 2. buckets on the home board (a bucket is just an item you add into); "tilemon" is the seeded home board
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","kind":"item","name":"Products"}'   # -> node id "products"
+# 3. include the EXISTING project boards into the bucket
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"chessku"}'
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"eulogy-song"}'
+# 4. weight the bucket (importance = size); reorganise later with /api/move
+curl -s -X POST $U/api/weight -d '{"board":"tilemon","path":"products","weight":3}'
 ```
+
+Node ids are derived from the name/slug (e.g. bucket "Products" → `products`, an include of
+`chessku` → `chessku`), so address children as `products.chessku`. Re-running reconciles: `GET
+/api/state?board=tilemon` first, respect what's already placed and its weights, and only add
+what's missing — never overwrite the human's arrangement.
 
 This dialogue is the **cold-start** path — bulk-shaping many things from nothing, where
 reacting-to-a-draft beats dragging tiles. Ongoing maintenance is different: reweight by dragging
-in the UI, and (once built) move/regroup with in-app structure ops. Ongoing *status* updates use
-`POST /api/status` (above); only the initial structure is authored here.
+in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST /api/status`
+(above); only the initial structure is built here — and only ever through the API.
 
 ## Activation note
 

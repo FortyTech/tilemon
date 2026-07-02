@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.mjs",
     "demo": "node server.mjs ./examples/boards",
-    "test": "node test/board.test.mjs"
+    "test": "node test/board.test.mjs && node test/server.test.mjs"
   },
   "engines": { "node": ">=18" },
   "files": ["server.mjs", "dashboard.html", "board.js", "examples", "skills"],

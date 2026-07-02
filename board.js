@@ -1,10 +1,11 @@
-// board.js — Tilemon renderer. Framework-agnostic, zero dependencies, ESM.
+// board.js — TileMon renderer. Framework-agnostic, zero dependencies, ESM.
 //
 //   import { mount } from './board.js'
 //   const board = mount(boardEl, null, {
 //     state, boards,                                // resolved tree + board list (for the switcher)
 //     onStatusChange:(board,path,status)=>{}, onWeightChange:(board,path,weight)=>{},
-//     onAddNode:(board,parentPath,kind,name)=>{},   // kind 'item' | 'native'
+//     onAddNode:(board,parentPath,kind,name)=>{},   // kind 'item' | 'include' (target via name->slug upstream)
+//     onAddBoard:(board,parentPath,name)=>{},        // create a bare board + include it here
 //     onRenameNode:(board,path,name)=>{}, onDeleteNode:(board,path)=>{},
 //     onSetToolbar:(board,path,bool)=>{}, onOpenBoard:(slug)=>{},
 //   })
@@ -81,7 +82,7 @@ function injectStyle(doc) {
 export function mount(boardEl, controlsEl, opts = {}) {
   const cb = k => opts[k] || (() => {});
   const onStatusChange = cb('onStatusChange'), onWeightChange = cb('onWeightChange');
-  const onAddNode = cb('onAddNode'), onRenameNode = cb('onRenameNode'), onDeleteNode = cb('onDeleteNode');
+  const onAddNode = cb('onAddNode'), onAddBoard = cb('onAddBoard'), onRenameNode = cb('onRenameNode'), onDeleteNode = cb('onDeleteNode');
   const onSetToolbar = cb('onSetToolbar'), onOpenBoard = cb('onOpenBoard');
   let boards = opts.boards || [];
   const doc = boardEl.ownerDocument, win = doc.defaultView || globalThis;
@@ -239,7 +240,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function barAction(node, a, ds) {
     if (a === 'st') return setStatus(node, ds);
     if (a === 'add') { const n = win.prompt('New item'); if (n && n.trim()) { const t = containerTarget(node); onAddNode(t.board, t.path, 'item', n.trim()); } return; }
-    if (a === 'addb') { const n = win.prompt('New nested board'); if (n && n.trim()) { const t = containerTarget(node); onAddNode(t.board, t.path, 'native', n.trim()); } return; }
+    if (a === 'addb') { const n = win.prompt('New nested board'); if (n && n.trim()) { const t = containerTarget(node); onAddBoard(t.board, t.path, n.trim()); } return; }
     if (a === 'ren') { const n = win.prompt('Rename', node.name); if (n && n.trim()) onRenameNode(node._board, node._path, n.trim()); return; }
     if (a === 'del') { if (win.confirm(`Delete “${node.name}”?`)) onDeleteNode(node._board, node._path); return; }
     if (a === 'less') return nudgeWeight(node, 1 / 1.4);
@@ -386,7 +387,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     q('#tbShell').onclick = () => onSetToolbar(viewRoot._board, viewRoot._path, false);   // turn this board bare
     if (q('#tbBoards')) q('#tbBoards').onchange = () => onOpenBoard(q('#tbBoards').value);
     q('#tbAdd').onclick = () => { const n = win.prompt('New item'); if (n && n.trim()) { const t = containerTarget(viewRoot); onAddNode(t.board, t.path, 'item', n.trim()); } };
-    q('#tbAddb').onclick = () => { const n = win.prompt('New nested board'); if (n && n.trim()) { const t = containerTarget(viewRoot); onAddNode(t.board, t.path, 'native', n.trim()); } };
+    q('#tbAddb').onclick = () => { const n = win.prompt('New nested board'); if (n && n.trim()) { const t = containerTarget(viewRoot); onAddBoard(t.board, t.path, n.trim()); } };
     q('#tbWt').onclick = () => { showWeights = !showWeights; render(); };
     q('#tbDone').onclick = () => { showDone = !showDone; rebuild(); render(); };
     if (!statusEl) { statusEl = doc.createElement('div'); statusEl.className = 'tlm-status'; boardEl.appendChild(statusEl); }

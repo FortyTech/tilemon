@@ -1,4 +1,4 @@
-# Tilemon
+# TileMon
 
 A priority board where **importance is space**. The canvas is fixed, so making one
 thing bigger shrinks everything else — a zero-sum map that won't let you pretend ten
@@ -47,7 +47,7 @@ npx skills add -g FortyTech/tilemon     # or globally, for every project
 ```
 
 The skill teaches the agent *when* to flag (block/finish) and how to bootstrap a board — but
-it's not required: any agent told "there's a Tilemon board at localhost:4000" can use the API
+it's not required: any agent told "there's a TileMon board at localhost:4000" can use the API
 directly. The whole integration is one POST, scoped to a board. It **upserts** — if the board or the node doesn't exist yet,
 it's created (born small) — and it can *only* set status/note, never your weights or
 structure (a different endpoint, with no access to weight).
@@ -97,9 +97,15 @@ Edit a board file directly and it live-updates — the server watches the direct
 | `GET /api/events` | — | Server-Sent Events; `change` on any write |
 | `POST /api/status` | **agents** | `{board, path, status, note?, name?}` — upsert; status/note only |
 | `POST /api/weight` | **you / UI** | `{board, path, weight}` — weight only, node must exist |
-| `POST /api/node` | **you / UI** | `{board, path, kind, name}` — add an inline item (`item`) or a nested board (`native`) |
+| `POST /api/board` | **you / UI** | `{name, slug?, source?}` — create a bare board (placed nowhere) → `{slug}` |
+| `POST /api/node` | **you / UI** | `{board, path, kind, name?, target?}` — add a plain item (`kind:"item"`) or an include of an existing board (`kind:"include"`, `target` = its slug) |
+| `POST /api/move` | **you / UI** | `{board, path, toBoard?, toPath?}` — re-parent a node within or across boards (cycle-guarded) |
 | `PATCH /api/node` | **you / UI** | `{board, path, name}` — rename |
 | `DELETE /api/node` | **you / UI** | `{board, path}` — remove a node (a referenced board file is left intact) |
+
+Structure is assembled from clean primitives: **create a board once** (`/api/board`), **reference it**
+wherever you like (`/api/node kind:"include"`), and **rearrange references** (`/api/move`). A *bucket*
+is just an item you add children into. Agents never touch these — they only `POST /api/status`.
 
 Set `TILEMON_TOKEN` to require `Authorization: Bearer <token>` on the write routes
 before exposing the port beyond a trusted network.
