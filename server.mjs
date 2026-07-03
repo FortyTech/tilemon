@@ -446,6 +446,28 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { error: 'not found' });
 });
 
+// operator-side attention rules — a starter template dropped next to the boards on first run.
+const ATTENTION_TEMPLATE = `# attention.md — your TileMon attention rules
+#
+# Free text, entirely yours. Agents working in a place read this and push status so the things that
+# need YOU glow. What counts as "needs attention" is your call — describe it however you like; the
+# agent applies judgment and reports via the board. Rules are a personal lens, evaluated where the
+# work happens and pushed to the board (POST /api/status is the whole interface — generate those
+# pushes however suits you). Global rules apply everywhere; add "# board: <slug>" or
+# "# node: <board>.<path>" to target specifics.
+
+# --- global ---
+# (examples — replace with your own)
+# - Uncommitted changes in a repo should be blocked until committed or stashed.
+# - A dependency with a known CVE -> blocked.
+
+# --- board: example-project ---
+# - A client email left unanswered for >2 days -> blocked.
+
+# --- node: example-project.billing ---
+# - Billing errors in the logs -> blocked.
+`;
+
 await mkdir(BOARDS, { recursive: true }).catch(() => {});
 // first run: seed an EMPTY home board (yours) + a SEPARATE, self-describing `tutorial` board.
 // They never mix — the dashboard lands on your board once it has content, else on the tutorial,
@@ -459,6 +481,7 @@ if ((await listBoards()).length === 0) {
     { id: 'area', name: 'Importance is area — drag a tile to resize it; double-click to drill in.', weight: 1, status: 'todo' },
     { id: 'agents', name: 'Agents fill boards by POSTing status (see examples/agent.mjs).', weight: 1, status: 'todo' },
   ] });
+  await writeFile(join(BOARDS, 'attention.md'), ATTENTION_TEMPLATE).catch(() => {});
 }
 await writeFile(PIDFILE, String(process.pid)).catch(() => {});   // so `--stop` can find us (foreground or backgrounded)
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { try { unlinkSync(PIDFILE); } catch {} process.exit(0); });

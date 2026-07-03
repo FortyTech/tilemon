@@ -53,6 +53,24 @@ You can only ever set **status/note**, on any node, via this endpoint — never 
 structure. The human owns importance. That's why one board-wide token is safe: it can't
 reshuffle priorities, only flag and (via upsert) add.
 
+## Attention rules (attention.md) — push what needs the human
+
+The human may keep **attention rules** in `~/.tilemon/attention.md` (operator-side, free text):
+what should grab their attention and how it maps to status. The rules are theirs, not the board's;
+per-board/node rules appear as targeted sections (`# board: <slug>`, `# node: <board>.<path>`).
+
+Honour them by **sending updates to TileMon** — `POST /api/status` is the whole interface. When
+active in a project, read its `attention.md` rules (the global ones + this board's section) and
+**push status as you see fit** — flag `blocked` the instant you hit something a rule cares about, mark
+things `done`, surface anything the human asked to see. The rules are prose precisely so you can apply
+judgment, and you evaluate them with **your own tools** (rule about git → run git; about logs → read
+them). TileMon prescribes no mechanism and ships no rule-specific tooling.
+
+How those pushes get generated is the operator's choice — you doing it live as you work, a `Stop` hook
+when you pause, CI, a scheduled job, whatever suits them — all of it just `POST`s status. The natural
+default is to push from where the work is happening; the only constant is that updates are *sent to*
+TileMon (it's a receiver — it never reaches out).
+
 ## Addressing convention: a board per project, grouped into buckets
 
 - **Each project is its own board** (slug = its repo/project name). Agents working a project
@@ -137,6 +155,33 @@ This dialogue is the **cold-start** path — bulk-shaping many things from nothi
 reacting-to-a-draft beats dragging tiles. Ongoing maintenance is different: reweight by dragging
 in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST /api/status`
 (above); only the initial structure is built here — and only ever through the API.
+
+### Final setup step — offer the Stop hook (opt-out)
+
+So the board stays current without relying on an agent to remember, **offer** to install a Claude
+Code `Stop` hook. It fires when the agent pauses for input and nudges that same agent — once — to
+apply `attention.md` and push updates before it stops. **Ask first**: it edits the project's Claude
+Code config and adds a check to every pause, so proceed only if the human accepts (mention they can
+opt out, and remove it later by deleting the `Stop` entry). Claude-Code-specific; other setups just
+push however they push.
+
+If accepted, write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
+```js
+#!/usr/bin/env node
+// TileMon Stop hook — on pause, once per turn, nudge the agent to honour attention.md.
+let s = ''; process.stdin.on('data', c => (s += c)).on('end', () => {
+  try { if (JSON.parse(s).stop_hook_active === true) process.exit(0); } catch {}   // already nudged this turn → let it stop
+  process.stdout.write(JSON.stringify({ decision: 'block', reason:
+    "Before finishing: if this repo has a TileMon board, apply the rules in ~/.tilemon/attention.md that concern it and push any status updates (POST /api/status to $TILEMON_URL, else http://localhost:4000) — use the tilemon skill if available. If nothing needs updating, just stop." }));
+  process.exit(0);
+});
+```
+Then **create or merge** `.claude/settings.json` (Stop hooks take no matcher):
+```json
+{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/tilemon-stop.mjs\"" } ] } ] } }
+```
+The `stop_hook_active` guard makes it block only once per turn, so it can't loop. TileMon ships none
+of this — it's written into *your* project at setup; the hook only ever triggers a `POST /api/status`.
 
 ## Activation note
 

@@ -85,6 +85,34 @@ curl -X POST http://localhost:4000/api/status \
   -d '{"board":"webapp","path":"api.refactor-auth","status":"blocked","note":"need the staging DB password"}'
 ```
 
+## Attention rules (`attention.md`)
+
+You decide what deserves your attention — write it in plain English in `~/.tilemon/attention.md`
+(seeded with a template on first run). Agents working in a place read it and push status so the
+things that need *you* glow:
+
+```
+# --- global ---
+- Uncommitted changes in a repo should be blocked until committed.
+- A client email unanswered >2 days → blocked.
+
+# --- board: acme-portal ---
+- Failing CI → blocked.
+```
+
+The rules are **yours** — a personal lens, like your weights, never baked into the shared board —
+and they're honoured by **whoever's already working there**, evaluating them with their own tools.
+TileMon prescribes no mechanism and ships no rule-specific tooling: **sending updates to TileMon
+(`POST /api/status`) is the whole interface**, and how you generate those updates — an agent working
+live, a hook, CI, a scheduled job — is up to you. Scope with `# board: <slug>` / `# node: <board>.<path>`
+sections; the rest is global.
+
+**Optional — a Claude Code `Stop` hook.** So the board stays current without you (or an agent)
+remembering, setup can add a project `Stop` hook that, when the agent pauses for input, nudges it once
+to apply `attention.md` and push updates before it stops. It's offered opt-out at setup, scoped to the
+project's `.claude/settings.json`, and removable by deleting the `Stop` entry. Claude-Code-specific;
+everything else just pushes via `POST /api/status`.
+
 ## Boards & file format
 
 A **board** is `<slug>.json` in the boards directory. A board has a `source` (where its data
