@@ -85,6 +85,27 @@ curl -X POST http://localhost:4000/api/status \
   -d '{"board":"webapp","path":"api.refactor-auth","status":"blocked","note":"need the staging DB password"}'
 ```
 
+## Attention rules (`attention.md`)
+
+You decide what deserves your attention — write it in plain English in `~/.tilemon/attention.md`
+(seeded with a template on first run). Agents working in a place read it and push status so the
+things that need *you* glow:
+
+```
+# --- global ---
+- Uncommitted changes in a repo should be blocked until committed.
+- A client email unanswered >2 days → blocked.
+
+# --- board: acme-portal ---
+- Failing CI → blocked.
+```
+
+The rules are **yours** — a personal lens, like your weights, never baked into the shared board —
+and they're honoured by **whoever's already working there**, evaluating them with their own tools.
+TileMon prescribes no mechanism and ships no rule-specific tooling; all any of it does is
+`POST /api/status`. Rules are applied *where the work happens*, one push at a time — **never** by a
+central poller. Scope with `# board: <slug>` / `# node: <board>.<path>` sections; the rest is global.
+
 ## Boards & file format
 
 A **board** is `<slug>.json` in the boards directory. A board has a `source` (where its data
