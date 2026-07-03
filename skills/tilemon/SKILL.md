@@ -1,14 +1,15 @@
 ---
 name: tilemon
-description: Report task/agent status to a TileMon priority board (todo/in_progress/blocked/done) so it shows live on the always-on board, and bootstrap boards for a project. Use when you start, block on, or finish a tracked task, or when asked to set up TileMon for a project. Requires a running TileMon server (npx tilemon).
+description: Report task/agent status to a TileMon priority board (todo/in_progress/waiting/blocked/done) so it shows live on the always-on board, and bootstrap boards for a project. Use when you start, need the human, block on a problem, or finish a tracked task, or when asked to set up TileMon for a project. Requires a running TileMon server (npx tilemon).
 ---
 
 # TileMon — report status to the board
 
 TileMon is an **attention-management tool, not a project tracker**: a zero-sum treemap that answers
 one question for the human — *what are my agents waiting on me for?* Importance is on-screen area,
-the human owns the weights, and **agents set status**. Only `blocked` glows (it needs the human);
-`in_progress` is a calm signal (an agent's working, no attention needed). Your entire integration
+the human owns the weights, and **agents set status**. The "needs-you" states glow — `waiting`
+(needs your input) amber, `blocked` (something's wrong) louder red; `in_progress` is a calm signal
+(an agent's working, no attention needed). Your entire integration
 is **one HTTP POST**, and it **upserts** (creates the board and any missing nodes on first write),
 so you can register your own work as you go — but keep it coarse (see below); noise defeats the tool.
 
@@ -36,18 +37,20 @@ scheduled ones — often at the same time. You are just one of those clients. So
    `path` = a stable, dotted id for your task within that board, e.g. `api.refactor-auth`.
    **Reuse the same board + path across a task's whole life** — that's how a reconnecting agent
    lands back on the same tile. Address by id, never by display name.
-3. **POST it.** `status` ∈ `todo | in_progress | blocked | done`. Include a `note` — your message
-   (what you're doing / stuck on); it shows in the tile's hover actions.
+3. **POST it.** `status` ∈ `todo | in_progress | waiting | blocked | done`. Include a `note` — your
+   message (what you're doing / what you need); it shows in the tile's hover actions.
    ```bash
    curl -s -X POST "$TILEMON_URL/api/status" \
      -H 'content-type: application/json' \
-     -d '{"board":"webapp","path":"api.refactor-auth","status":"blocked","note":"need the staging DB password"}'
+     -d '{"board":"webapp","path":"api.refactor-auth","status":"waiting","note":"which auth provider do you want — Clerk or Auth0?"}'
    ```
    Add `-H "Authorization: Bearer $TILEMON_TOKEN"` if the server requires a token.
    From inside the tilemon repo: `node examples/flag.mjs <board> <dotted.id.path> <status> "<note>"`.
-4. **When to fire:** you *start* a tracked task → `in_progress`; you're *blocked* (need a
-   decision, a key, an upstream fix) → `blocked` (this glows and pulls the human in); you
-   *finish* → `done` (it drops off the board). A `{"ok":true}` response means it's live.
+4. **When to fire:** *start* → `in_progress`; *finish* → `done` (drops off). When you **need the
+   human**, pick the level by severity: `waiting` = you need their input/decision/answer/approval and
+   nothing is broken (glows amber — present, not urgent); `blocked` = something is *wrong* — an error,
+   a failing build, an obstacle you can't get past (glows red **and pulses**, louder). Always attach a
+   `note` saying exactly what you need. A `{"ok":true}` response means it's live.
 
 You can only ever set **status/note**, on any node, via this endpoint — never weights or
 structure. The human owns importance. That's why one board-wide token is safe: it can't
@@ -165,17 +168,22 @@ in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST 
 The board only earns its keep once it knows what deserves *their* attention, so **always ask** — never
 leave `attention.md` blank and never assume they'll write it later. After the structure's built, ask
 the human what they want surfaced, offering a few concrete examples to react to (they pick, edit, or
-add their own). Same rule as weights: you **elicit and record, you never impose or guess**. Obvious
-starters to offer:
-- uncommitted changes sitting in a repo
-- committed-but-unpushed work
-- failing tests / a red CI run
-- an open PR awaiting their review (or their PR blocked on requested changes)
-- a dependency with a known vulnerability
-- a client message / email unanswered for more than a day or two
+add their own). Same rule as weights: you **elicit and record, you never impose or guess**.
 
-Write the agreed rules into `~/.tilemon/attention.md` — global, or under a `# board: <slug>` section
-if a rule is repo-specific. If they genuinely want none yet, leave the template — but *ask first*.
+The headline is intrinsic and doesn't need a rule: **an agent that needs the human already flags it**
+— `waiting` for a decision/input, `blocked` when something's wrong. Name that so they know it's
+automatic; then ask what *ambient* things to add on top:
+- uncommitted or committed-but-unpushed work in a repo → usually `waiting`
+- failing tests / a red CI run → usually `blocked`
+- an open PR awaiting their review (or theirs blocked on changes) → `waiting`
+- any obvious security issue (e.g. a vulnerable dependency) → `blocked`
+- an urgent item from a connected tool (email / Slack / tickets) → `waiting`
+
+A rule is only useful if an agent can actually *check* it — that's bounded by the tools/integrations
+in the agent's context (git is always there; PRs/CI need `gh`/CI access; email needs an MCP). So treat
+the list as illustrative, not guaranteed. Write the agreed rules into `~/.tilemon/attention.md` —
+global, or under a `# board: <slug>` section if repo-specific. If they genuinely want none yet, leave
+the template — but *ask first*.
 
 ### Then install the Stop hook (core plumbing, opt-out)
 
@@ -193,7 +201,7 @@ Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
 let s = ''; process.stdin.on('data', c => (s += c)).on('end', () => {
   try { if (JSON.parse(s).stop_hook_active === true) process.exit(0); } catch {}   // already nudged this turn → let it stop
   process.stdout.write(JSON.stringify({ decision: 'block', reason:
-    "Before finishing: if this repo has a TileMon board, apply the rules in ~/.tilemon/attention.md that concern it and push any status updates (POST /api/status to $TILEMON_URL, else http://localhost:4000) — use the tilemon skill if available. If nothing needs updating, just stop." }));
+    "Before finishing, update the TileMon board (POST /api/status to $TILEMON_URL, else http://localhost:4000; use the tilemon skill if available): if you're pausing because you need the human, mark your task 'waiting' (you need a decision/input) or 'blocked' (something went wrong); apply any ~/.tilemon/attention.md rules that concern this repo. If nothing needs updating, just stop." }));
   process.exit(0);
 });
 ```

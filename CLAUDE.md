@@ -2,7 +2,8 @@
 
 **An attention-management tool, not a project manager.** The one question it answers is *what
 are my agents waiting on me for?* A zero-sum treemap: importance = on-screen area; agents flag
-status, you own the weights. Only `blocked` glows (needs you); `in_progress` is a calm "working"
+status, you own the weights. The needs-you states glow — `waiting` (needs your input) amber, `blocked`
+(something's wrong) louder red + pulse; `in_progress` is a calm "working"
 dot (no heat); the surface stays coarse — detail is drill-down. **The test for any feature: does
 it direct attention, or dilute it?** Adding granular detail (e.g. seeding every task) is the
 failure mode — when it feels busy, subtract. Distributed as an `npx` tool over local JSON boards.
@@ -62,7 +63,8 @@ because it *can't* reach weight or structure.
 
 - Stable **string** `id`s, addressed dotted from the root's children (`work.ship.task`),
   no dots inside an id. `name` is display-only and free to change.
-- **Any node may carry a `status`** (`todo|in_progress|blocked|done`) — the tree is
+- **Any node may carry a `status`** (`todo|in_progress|waiting|blocked|done`; `waiting`=needs your
+  input (amber), `blocked`=something's wrong (red+pulse, louder)) — the tree is
   uniformly recursive, not leaf-only. A node's own status maps to heat and acts as a
   **floor**; a node with children also rolls up heat area-weighted, so displayed heat is
   `max(own, rollup)`. A statusless node behaves as pure rollup (exactly the old model).
