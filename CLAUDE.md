@@ -15,7 +15,7 @@ to **upsert**, the board live-updates over SSE, includes render as navigable sum
 hand-authors JSON), **background mode** (`--daemon`/`--stop`, detached via Node built-ins), and the
 **skill** installs via `npx skills add FortyTech/tilemon`. Published to npm; latest is **`0.3.0`**
 (multi-repo default). One machine = one shared board; **cross-machine forces the hosted/SaaS path
-(deferred)**. Jira source stubbed (v2). UI verified in-browser by William; logic/API/packaging
+(deferred)**. Jira source stubbed (v2). UI verified in a real browser; logic/API/packaging
 verified headlessly here.
 
 ## Stack — deliberately *not* the workspace default
@@ -35,7 +35,7 @@ Node 18+ built-ins only; no build step, no framework, no dependencies.
 | `server.mjs` | Local server over a **boards directory**: `/api/boards`, `/api/state?board=`, upsert on `/api/status`, include-resolution (summary heat + acyclic), atomic writes, SSE, slug safety, jira stub. |
 | `dashboard-reference.html` | The original proven prototype (numeric ids + manual heat). Behavioural source-of-truth for diffing; not served. |
 | `examples/boards/` | Sample boards: a native board that `include`s another + a Jira-source stub. `npm run demo` serves these. |
-| `state.sample.json` / `state.forty.json` | Legacy single-board data (pre-multi-board). `state.forty.json` is **gitignored, local-only** (personal). |
+| `state.sample.json` | Legacy single-board sample data (pre-multi-board). Any real `state.*.json` you create is **gitignored, local-only**. |
 | `examples/agent.mjs` · `examples/flag.mjs` | A toy swarm agent (in_progress→blocked→done) and a one-shot flagger — the whole loop in a file. |
 | `test/board.test.mjs` + `test/fixture.json` | Headless renderer checks via a minimal DOM shim (`npm test`) — done-drop, rollup, parent-status floor, show-done, include-nav. |
 
@@ -129,6 +129,6 @@ Playwright. Eyeball the actual board in a real browser when iterating on visuals
 - **Reply channel** (board→agent): `POST /api/reply` + agent polls its inbox — the "action
   the things" half. Deliberately deferred.
 - **v2: Jira as a read-only second source** — the `jira://` board type is stubbed; wire the
-  adapter (FO project; weight kept in a TileMon sidecar keyed by ticket id) and add it as an
+  adapter (a Jira project; weight kept in a TileMon sidecar keyed by ticket id) and add it as an
   `add`-type in the UI once the source is real. See SPEC §5.
 - Task-seeding on bootstrap (populate boards from state/next-steps docs) — parked, next up.

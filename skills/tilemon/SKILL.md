@@ -70,7 +70,7 @@ instead of one per project:
   which is the default. Every agent, in *any* local repo, already targets `http://localhost:4000`, so
   they all report into that one board. Don't start a second server (and don't use `--project`, which
   scopes a board to a single repo) — everything converges on `~/.tilemon`.
-- **When setting up, survey every root the human names** (e.g. `~/forty-workspace`, `~/doefin-local`),
+- **When setting up, survey every root the human names** (e.g. `~/work`, `~/side-projects`),
   not just the current directory — a board per project across all of them. A **bucket per workspace**
   is usually the natural top level.
 - **Different machines can't share a `localhost` board** — that needs a hosted TileMon (not yet
@@ -109,19 +109,19 @@ then set weights.
 ```bash
 U=${TILEMON_URL:-http://localhost:4000}
 # 1. a board per project (bare; returns its slug)
-curl -s -X POST $U/api/board -d '{"name":"Chessku","slug":"chessku"}'          # -> {"slug":"chessku"}
-curl -s -X POST $U/api/board -d '{"name":"EulogySong","slug":"eulogy-song"}'
+curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp"}'            # -> {"slug":"webapp"}
+curl -s -X POST $U/api/board -d '{"name":"API","slug":"api"}'
 # 2. buckets on the home board (a bucket is just an item you add into); "tilemon" is the seeded home board
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","kind":"item","name":"Products"}'   # -> node id "products"
 # 3. include the EXISTING project boards into the bucket
-curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"chessku"}'
-curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"eulogy-song"}'
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"webapp"}'
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"api"}'
 # 4. weight the bucket (importance = size); reorganise later with /api/move
 curl -s -X POST $U/api/weight -d '{"board":"tilemon","path":"products","weight":3}'
 ```
 
 Node ids are derived from the name/slug (e.g. bucket "Products" → `products`, an include of
-`chessku` → `chessku`), so address children as `products.chessku`. Re-running reconciles: `GET
+`webapp` → `webapp`), so address children as `products.webapp`. Re-running reconciles: `GET
 /api/state?board=tilemon` first, respect what's already placed and its weights, and only add
 what's missing — never overwrite the human's arrangement.
 
