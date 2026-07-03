@@ -59,17 +59,17 @@ The human may keep **attention rules** in `~/.tilemon/attention.md` (operator-si
 what should grab their attention and how it maps to status. The rules are theirs, not the board's;
 per-board/node rules appear as targeted sections (`# board: <slug>`, `# node: <board>.<path>`).
 
-Honour them by **pushing from where the work is — never by polling or scanning places you aren't in.**
-When active in a project, read its `attention.md` rules (the global ones + this board's section) and
+Honour them by **sending updates to TileMon** — `POST /api/status` is the whole interface. When
+active in a project, read its `attention.md` rules (the global ones + this board's section) and
 **push status as you see fit** — flag `blocked` the instant you hit something a rule cares about, mark
 things `done`, surface anything the human asked to see. The rules are prose precisely so you can apply
-judgment, and you evaluate them with **your own tools** (if a rule is about git, run git; if it's about
-logs, read them) — TileMon prescribes no mechanism and ships no rule-specific tooling.
+judgment, and you evaluate them with **your own tools** (rule about git → run git; about logs → read
+them). TileMon prescribes no mechanism and ships no rule-specific tooling.
 
-The human may *also* automate honouring however they like — a `Stop` hook, CI, a cron step in a job
-that already runs — but that's their choice and their script; all any of it does is `POST /api/status`.
-Do **not** spawn a scheduler or walk the filesystem to "refresh everything" — that re-centralises what
-the tool deliberately distributes. Status originates from the active place, one push at a time.
+How those pushes get generated is the operator's choice — you doing it live as you work, a `Stop` hook
+when you pause, CI, a scheduled job, whatever suits them — all of it just `POST`s status. The natural
+default is to push from where the work is happening; the only constant is that updates are *sent to*
+TileMon (it's a receiver — it never reaches out).
 
 ## Addressing convention: a board per project, grouped into buckets
 

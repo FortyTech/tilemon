@@ -102,9 +102,10 @@ things that need *you* glow:
 
 The rules are **yours** — a personal lens, like your weights, never baked into the shared board —
 and they're honoured by **whoever's already working there**, evaluating them with their own tools.
-TileMon prescribes no mechanism and ships no rule-specific tooling; all any of it does is
-`POST /api/status`. Rules are applied *where the work happens*, one push at a time — **never** by a
-central poller. Scope with `# board: <slug>` / `# node: <board>.<path>` sections; the rest is global.
+TileMon prescribes no mechanism and ships no rule-specific tooling: **sending updates to TileMon
+(`POST /api/status`) is the whole interface**, and how you generate those updates — an agent working
+live, a hook, CI, a scheduled job — is up to you. Scope with `# board: <slug>` / `# node: <board>.<path>`
+sections; the rest is global.
 
 ## Boards & file format
 
