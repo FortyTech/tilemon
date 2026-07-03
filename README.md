@@ -5,12 +5,15 @@ thing bigger shrinks everything else — a zero-sum map that won't let you prete
 things are all urgent. Hand tasks to your agents; when one gets stuck, it glows.
 
 ```
-npx tilemon           # serves ./.tilemon (created on first run); or: npx tilemon ./some-dir
+npx tilemon           # serves ~/.tilemon — one board for the whole machine (created on first run)
 ```
 
 …boots a local server, serves the board at `http://localhost:4000`, and reads/writes a
-directory of JSON boards (default `./.tilemon`). Point an always-on monitor at it. Agents flag status over HTTP
-(and can populate an empty board from scratch); you own the weights by dragging tiles.
+directory of JSON boards. By default that's `~/.tilemon`, so **every local repo shares one board** —
+which is what a cross-project tool wants. Want a board scoped to just one repo instead? `npx tilemon
+--project` (serves `./.tilemon`), or point it at any explicit folder: `npx tilemon ./some-dir`.
+Point an always-on monitor at it. Agents flag status over HTTP (and can populate an empty board
+from scratch); you own the weights by dragging tiles.
 
 Run it detached so it outlives the terminal (or the agent) that started it — no extra tooling,
 just Node:
@@ -20,17 +23,12 @@ npx tilemon --daemon    # start in the background (survives this shell); --stop 
 npx tilemon --stop      # stop the backgrounded server
 ```
 
-**One board across many local repos.** Run a single shared server instead of one per project:
+**One board across many local repos.** This is the default — `~/.tilemon` is machine-wide, so one
+server covers every repo. Agents in any repo target `http://localhost:4000` by default, so they all
+land on the same board; just don't start a second server elsewhere. (Spanning *different machines*
+needs a hosted TileMon, which isn't built yet.)
 
-```
-npx tilemon --global --daemon   # serves ~/.tilemon; every local repo reports into this one board
-```
-
-Agents in any repo target `http://localhost:4000` by default, so they all land on the same board —
-just don't start a second server elsewhere. (Spanning *different machines* needs a hosted TileMon,
-which isn't built yet.)
-
-Want it back after a reboot? That's your OS's job, not the tool's — add `npx tilemon --global --daemon`
+Want it back after a reboot? That's your OS's job, not the tool's — add `npx tilemon --daemon`
 to your startup (Login Items on macOS, a systemd user unit on Linux, Task Scheduler on Windows).
 
 A fresh run seeds one empty **home board** for you. From there you either **add** things
@@ -155,7 +153,7 @@ design, architecture, and roadmap.
 
 ```bash
 npm run demo    # serve ./examples/boards
-npm start       # serve ./boards (created empty; agents populate it)
+npm start       # serve ~/.tilemon (the default machine-wide board)
 npm test        # headless renderer checks (no browser needed)
 ```
 

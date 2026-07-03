@@ -8,12 +8,15 @@ architecture, roadmap, open decisions). This file is the working-state layer on 
 
 ## Status
 
-Multi-board swarm loop built and verified headlessly. `npx tilemon ./boards` serves a
-directory of boards; agents `POST /api/status` with `{board,path,status,note}` to **upsert**
-(create a board + nodes from scratch), the board live-updates over SSE, includes render as
-navigable summary tiles. **`0.0.1` (single-board v1) is published to npm as the name claim;**
-`0.1.0` (this multi-board version) is ready to publish. No SaaS. Jira source stubbed (v2).
-UI verified in-browser by William; logic/API/packaging verified headlessly here.
+Multi-board swarm loop built and shipping. `npx tilemon` serves a directory of boards (default
+`~/.tilemon`, the machine-wide board; `--project` scopes to `./.tilemon`); agents `POST /api/status`
+to **upsert**, the board live-updates over SSE, includes render as navigable summary tiles.
+**Structure is API-driven** (`/api/board`, `/api/node {item|include}`, `/api/move` — nothing
+hand-authors JSON), **background mode** (`--daemon`/`--stop`, detached via Node built-ins), and the
+**skill** installs via `npx skills add FortyTech/tilemon`. Published to npm; latest is **`0.3.0`**
+(multi-repo default). One machine = one shared board; **cross-machine forces the hosted/SaaS path
+(deferred)**. Jira source stubbed (v2). UI verified in-browser by William; logic/API/packaging
+verified headlessly here.
 
 ## Stack — deliberately *not* the workspace default
 
@@ -107,8 +110,8 @@ handover, so SPEC.md stays the original record:
 
 ```bash
 npm run demo                          # serve ./examples/boards  (http://localhost:4000)
-npm start                             # serve ./.tilemon (default; created + seeded on first run)
-TILEMON_TOKEN=secret node server.mjs ./.tilemon   # auth on writes
+npm start                             # serve ~/.tilemon (default machine-wide board; --project for ./.tilemon)
+TILEMON_TOKEN=secret node server.mjs              # auth on writes (serves ~/.tilemon by default)
 node examples/agent.mjs webapp api.refactor-auth  # toy agent walks a job through the lifecycle
 npm test                              # headless; no browser required
 ```
@@ -128,4 +131,4 @@ Playwright. Eyeball the actual board in a real browser when iterating on visuals
 - **v2: Jira as a read-only second source** — the `jira://` board type is stubbed; wire the
   adapter (FO project; weight kept in a TileMon sidecar keyed by ticket id) and add it as an
   `add`-type in the UI once the source is real. See SPEC §5.
-- Agent-facing Claude Code skill / install flow (`npx tilemon ./.tilemon`) — design only.
+- Task-seeding on bootstrap (populate boards from state/next-steps docs) — parked, next up.

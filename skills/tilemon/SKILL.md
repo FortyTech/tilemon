@@ -66,9 +66,10 @@ reshuffle priorities, only flag and (via upsert) add.
 A board can span **multiple repos/workspaces on one machine** — you just run a single shared server
 instead of one per project:
 
-- **Run one global server**, not a per-repo `./.tilemon`: `npx tilemon --global --daemon` serves
-  `~/.tilemon`. Every agent, in *any* local repo, already targets `http://localhost:4000`, so they
-  all report into that one board. Don't start a second server in another repo — point them at this one.
+- **Run one server on the default machine-wide board** — `npx tilemon --daemon` serves `~/.tilemon`,
+  which is the default. Every agent, in *any* local repo, already targets `http://localhost:4000`, so
+  they all report into that one board. Don't start a second server (and don't use `--project`, which
+  scopes a board to a single repo) — everything converges on `~/.tilemon`.
 - **When setting up, survey every root the human names** (e.g. `~/forty-workspace`, `~/doefin-local`),
   not just the current directory — a board per project across all of them. A **bucket per workspace**
   is usually the natural top level.

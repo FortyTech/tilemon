@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // TileMon — multi-board file-source server. Zero external deps; Node 18+ built-ins only.
 //
-//   npx tilemon                          # serves ./.tilemon in the foreground (created on first run)
-//   npx tilemon ./boards                 # or point it at any folder
-//   npx tilemon --global                 # serves ~/.tilemon — one board shared by every local repo
-//   npx tilemon --global --daemon        # the usual portfolio setup: one detached, always-on board
-//   npx tilemon --daemon                 # start detached (survives this shell/agent); --stop to kill it
-//   PORT=4000 TILEMON_TOKEN=secret node server.mjs ./.tilemon
+//   npx tilemon                          # serves ~/.tilemon — one board every local repo shares (default)
+//   npx tilemon --daemon                 # the usual setup: one detached, always-on machine-wide board
+//   npx tilemon --project                # scope the board to THIS repo instead (serves ./.tilemon)
+//   npx tilemon ./boards                 # or point it at any explicit folder
+//   npx tilemon --stop                   # stop the backgrounded server
+//   PORT=4000 TILEMON_TOKEN=secret node server.mjs
 //
 // A boards directory holds one <slug>.json per board:
 //   { "name": "...", "visibility": "private", "source": "native", "children": [ ... ] }
@@ -43,9 +43,10 @@ import { homedir } from 'node:os';
 const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
-// boards dir: an explicit path wins; else --global => ~/.tilemon (one board shared by every local
-// repo), else ./.tilemon (per-project). A hidden folder of <slug>.json boards.
-const BOARDS = argv.find(a => !a.startsWith('-')) || (hasFlag('--global') ? join(homedir(), '.tilemon') : './.tilemon');
+// boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
+// else the default ~/.tilemon (one machine-wide board every local repo reports into, which is what
+// a cross-project tool wants). A hidden folder of <slug>.json boards.
+const BOARDS = argv.find(a => !a.startsWith('-')) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
 const PORT   = Number(process.env.PORT) || 4000;
 const TOKEN  = process.env.TILEMON_TOKEN || null;
 const DASH   = join(__dir, 'dashboard.html');
