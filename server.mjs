@@ -451,8 +451,9 @@ const ATTENTION_TEMPLATE = `# attention.md — your TileMon attention rules
 #
 # Free text, entirely yours. Agents working in a place read this and push status so the things that
 # need YOU glow. What counts as "needs attention" is your call — describe it however you like; the
-# agent applies judgment and reports via the board. Rules are a personal lens, evaluated WHERE the
-# work happens (never a central poller). Global rules apply everywhere; add "# board: <slug>" or
+# agent applies judgment and reports via the board. Rules are a personal lens, evaluated where the
+# work happens and pushed to the board (POST /api/status is the whole interface — generate those
+# pushes however suits you). Global rules apply everywhere; add "# board: <slug>" or
 # "# node: <board>.<path>" to target specifics.
 
 # --- global ---
