@@ -82,8 +82,19 @@ async function load(s) {
   }
 }
 
-// starting board: URL slug, else the home shell / first native board, else empty-state prompt.
-const pick = bs => (bs.find(b => b.slug === 'tilemon') || bs.find(b => b.toolbar !== false && b.source === 'native') || bs.find(b => b.source === 'native') || bs[0] || {}).slug;
+// starting board: URL slug wins; else the `tilemon` home/master board once it's populated; else
+// the tutorial; else the (empty) home; else any real board. The home board is the root you land
+// on when set up; the tutorial only takes over on a fresh install and stays in the switcher.
+const pick = bs => {
+  const get = s => bs.find(b => b.slug === s);
+  const home = get('tilemon'), tut = get('tutorial');
+  const b = (home && home.items > 0 && home)          // your home board, once it has content
+         || tut                                        // else the tutorial (fresh install)
+         || home                                       // else the (still-empty) home board
+         || bs.find(b => b.slug !== 'tutorial' && b.source === 'native')
+         || bs[0] || {};
+  return b.slug;
+};
 const boards = await listBoards();
 const start = slugFromUrl() || pick(boards);
 if (start) load(start);

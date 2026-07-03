@@ -1,11 +1,10 @@
 node_modules/
 *.tmp
 state.*.tmp
-# personal boards — keep the samples + fixture, ignore real ones
+# personal/local board data — never commit real boards (keep only the sample)
 /.tilemon/
 /boards/
-state.local.json
-state.live.json
-state.forty.json
+state.*.json
+!state.sample.json
 .DS_Store
 *.tgz

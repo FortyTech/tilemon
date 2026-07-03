@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // TileMon — multi-board file-source server. Zero external deps; Node 18+ built-ins only.
 //
-//   npx tilemon                          # serves ./.tilemon in the foreground (created on first run)
-//   npx tilemon ./boards                 # or point it at any folder
-//   npx tilemon --daemon                 # start detached (survives this shell/agent); --stop to kill it
-//   PORT=4000 TILEMON_TOKEN=secret node server.mjs ./.tilemon
+//   npx tilemon                          # serves ~/.tilemon — one board every local repo shares (default)
+//   npx tilemon --daemon                 # the usual setup: one detached, always-on machine-wide board
+//   npx tilemon --project                # scope the board to THIS repo instead (serves ./.tilemon)
+//   npx tilemon ./boards                 # or point it at any explicit folder
+//   npx tilemon --stop                   # stop the backgrounded server
+//   PORT=4000 TILEMON_TOKEN=secret node server.mjs
 //
 // A boards directory holds one <slug>.json per board:
 //   { "name": "...", "visibility": "private", "source": "native", "children": [ ... ] }
@@ -36,11 +38,15 @@ import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/prom
 import { existsSync, unlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
-const BOARDS = argv.find(a => !a.startsWith('-')) || './.tilemon';   // a hidden folder of <slug>.json boards
+// boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
+// else the default ~/.tilemon (one machine-wide board every local repo reports into, which is what
+// a cross-project tool wants). A hidden folder of <slug>.json boards.
+const BOARDS = argv.find(a => !a.startsWith('-')) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
 const PORT   = Number(process.env.PORT) || 4000;
 const TOKEN  = process.env.TILEMON_TOKEN || null;
 const DASH   = join(__dir, 'dashboard.html');
@@ -109,7 +115,7 @@ async function listBoards() {
   const out = [];
   for (const f of files) {
     const slug = f.slice(0, -5);
-    try { const b = await readBoard(slug); out.push({ slug, name: b.name || slug, visibility: b.visibility || 'private', source: b.source || 'native', toolbar: !!b.toolbar }); }
+    try { const b = await readBoard(slug); out.push({ slug, name: b.name || slug, visibility: b.visibility || 'private', source: b.source || 'native', toolbar: !!b.toolbar, items: (b.children || []).length }); }
     catch { /* skip unreadable */ }
   }
   return out;
@@ -441,14 +447,17 @@ const server = http.createServer(async (req, res) => {
 });
 
 await mkdir(BOARDS, { recursive: true }).catch(() => {});
-// first run: seed a self-describing home board so a fresh `tilemon ./boards` teaches the model
+// first run: seed an EMPTY home board (yours) + a SEPARATE, self-describing `tutorial` board.
+// They never mix — the dashboard lands on your board once it has content, else on the tutorial,
+// which stays revisitable in the board switcher forever.
 if ((await listBoards()).length === 0) {
-  await writeBoard('tilemon', { name: 'TileMon', visibility: 'private', source: 'native', toolbar: true, children: [
-    { id: 'welcome', name: 'Welcome — drag a tile to resize it, double-click to drill in', weight: 4, status: 'todo' },
-    { id: 'hover', name: 'Hover a tile for its actions (＋ rename ✕)', weight: 2, status: 'todo' },
-    { id: 'blocked', name: 'Blocked items glow — like this one', weight: 2, status: 'blocked' },
-    { id: 'agents', name: 'Agents fill boards by POSTing status (see examples/agent.mjs)', weight: 1, status: 'in_progress' },
-    { id: 'yours', name: 'Delete these and make it yours', weight: 1, status: 'todo' },
+  await writeBoard('tilemon', { name: 'TileMon', visibility: 'private', source: 'native', toolbar: true, children: [] });
+  await writeBoard('tutorial', { name: 'Tutorial', visibility: 'private', source: 'native', toolbar: true, children: [
+    { id: 'welcome', name: 'This is the Tutorial board — your own board is the default. Come back here any time from the board switcher.', weight: 4, status: 'todo' },
+    { id: 'blocked', name: 'It is an attention tool: blocked work GLOWS to pull you in — like this.', weight: 3, status: 'blocked' },
+    { id: 'working', name: 'The calm dot means an agent is working here. No glow — it does not need you yet.', weight: 2, status: 'in_progress' },
+    { id: 'area', name: 'Importance is area — drag a tile to resize it; double-click to drill in.', weight: 1, status: 'todo' },
+    { id: 'agents', name: 'Agents fill boards by POSTing status (see examples/agent.mjs).', weight: 1, status: 'todo' },
   ] });
 }
 await writeFile(PIDFILE, String(process.pid)).catch(() => {});   // so `--stop` can find us (foreground or backgrounded)

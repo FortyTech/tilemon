@@ -166,4 +166,13 @@ assert.ok(tb && !tile('__root'), 'a shell board renders the toolbar; the frame i
 tb.querySelector('#tbShell').onclick();
 assert.deepEqual((w.at(-1)), { k: 'tbar', b: 'shell', path: '', v: false }, 'toolbar shell toggle turns this board bare');
 
-console.log(`PASS — data pipeline + inlined boards + hover bars + cross-board writes + add + corner-drag + shell/toolbar verified`);
+// attention channels: `blocked` glows (hot); `in_progress` is a calm "working" dot with zero heat
+const chan = { name: 'Chan', _board: 'chan', _path: '', children: [
+  { id: 'work', name: 'Work', weight: 1, status: 'in_progress', _board: 'chan', _path: 'work' },
+  { id: 'stuck', name: 'Stuck', weight: 1, status: 'blocked', _board: 'chan', _path: 'stuck' },
+] };
+board.update(chan); raf.forEach(fn => fn());
+assert.ok(tile('work') && tile('work')._cls.has('working') && !tile('work')._cls.has('hot'), 'in_progress = calm working dot, never glows');
+assert.ok(tile('stuck') && tile('stuck')._cls.has('hot') && !tile('stuck')._cls.has('working'), 'blocked = glows (hot), no working dot');
+
+console.log(`PASS — data pipeline + inlined boards + hover bars + cross-board writes + add + corner-drag + shell/toolbar + attention channels verified`);

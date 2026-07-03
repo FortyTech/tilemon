@@ -18,7 +18,10 @@
 // _board (owning board) + _path (local path), so edits land right even across nested boards.
 
 const PAD = 5, HEADER = 22, INSET = 2, TOOLBAR_H = 36, STATUS_H = 22, BAR_MIN_W = 150, BAR_MIN_H = 22;
-const STATUS_HEAT = { todo: 0, in_progress: 0.5, blocked: 1 };
+// Heat = "needs your attention". Only `blocked` glows. `in_progress` is deliberately 0 — an agent
+// that's working doesn't want your attention; it gets a calm "working" dot instead (a separate,
+// quiet channel). This is an attention tool, not a status board: keep the loud channel for blocked.
+const STATUS_HEAT = { todo: 0, in_progress: 0, blocked: 1 };
 const STATUSES = ['todo', 'in_progress', 'blocked', 'done'];
 const STAT_LABEL = { todo: 'todo', in_progress: 'in progress', blocked: 'blocked', done: 'done' };
 const DONE_COLOR = 'rgb(74,92,58)';
@@ -29,8 +32,13 @@ const STYLE = `
   cursor:grab;user-select:none;transition:left .18s ease,top .18s ease,width .18s ease,height .18s ease,background .25s ease,opacity .2s ease}
 .tlm-board.nodrag .tile{transition:background .25s ease}
 .tlm-board .tile:active{cursor:grabbing}
-.tlm-board .tile.board{outline:1px dashed var(--tlm-gold,#E8C56A);outline-offset:-3px}
 .tlm-board .tile.target{outline:2px solid var(--tlm-gold,#E8C56A);outline-offset:-2px;box-shadow:inset 0 0 12px rgba(232,197,106,.35)}
+/* "working" = an agent is active here (rolled up). A calm, quiet pulse — NOT heat. Bottom-left,
+   clear of the header and hover bar. This is the low-attention channel; blocked is the loud one. */
+.tlm-board .tile.working::after{content:'';position:absolute;bottom:6px;left:7px;width:7px;height:7px;border-radius:50%;
+  background:var(--tlm-work,#6E93A6);box-shadow:0 0 5px rgba(110,147,166,.6);animation:tlm-work 2.4s ease-in-out infinite;pointer-events:none;z-index:5}
+@keyframes tlm-work{0%,100%{opacity:.28}50%{opacity:.82}}
+@media (prefers-reduced-motion:reduce){.tlm-board .tile.working::after{animation:none;opacity:.6}}
 .tlm-board .tile .hd{position:absolute;top:0;left:0;right:0;height:22px;display:flex;align-items:center;justify-content:space-between;
   padding:0 8px;gap:6px;pointer-events:none}
 .tlm-board .tile .leaf{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -160,6 +168,14 @@ export function mount(boardEl, controlsEl, opts = {}) {
     let a = 0, s = 0; for (const c of ch) { const ca = Math.max(c._rect.w * c._rect.h, 1e-4); a += ca; s += calcHeat(c) * ca; }
     node._heat = Math.max(own, a ? s / a : 0); return node._heat;
   }
+  // "working" rolls up as a boolean (any active descendant) — the calm activity channel, separate
+  // from heat. A tile shows the quiet dot if it, or anything inside it, is in_progress.
+  function calcWorking(node) {
+    let w = node.status === 'in_progress';
+    for (const c of (node.children || [])) { if (calcWorking(c)) w = true; }
+    node._working = w && !node._done;
+    return node._working;
+  }
 
   const lerp = (a, b, t) => a + (b - a) * t;
   function heatColor(h) { h = Math.max(0, Math.min(1, h));
@@ -180,7 +196,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function renderBoard() {
     const W = boardEl.clientWidth, H = boardEl.clientHeight, shell = isShell();
     const top = shell ? TOOLBAR_H : 0, bot = shell ? STATUS_H : 0;
-    layout(viewRoot, 0, top, W, Math.max(1, H - top - bot), 0, shell); calcHeat(viewRoot);
+    layout(viewRoot, 0, top, W, Math.max(1, H - top - bot), 0, shell); calcHeat(viewRoot); calcWorking(viewRoot);
     const vis = shell ? [] : [viewRoot];
     (function walk(n) { (n.children || []).forEach(c => { vis.push(c); walk(c); }); })(viewRoot);
     const seen = new Set();
@@ -208,12 +224,13 @@ export function mount(boardEl, controlsEl, opts = {}) {
       el.style.background = node._done ? DONE_COLOR : heatColor(node._heat);
       el.style.color = node._done ? 'var(--tlm-ink,#ECE7DA)' : textColor(node._heat);
       el.classList.toggle('hot', node._heat > 0.66 && !node._done);
+      el.classList.toggle('working', !!node._working);
       el.classList.toggle('done', !!node._done);
       el.classList.toggle('board', isBoard);
       const wt = showWeights ? `<span class="wt">${node.weight.toFixed(node.weight < 10 ? 1 : 0)}</span>` : '';
       const bar = el._bar ? el._bar.outerHTML : '';   // preserved below by re-applying hover
       let html = '';
-      if (isParent) { if (r.w > 54 && r.h > 30) html = `<div class="hd"><span class="nm">${esc(node.name)}${isBoard ? ' <span class="bl">↳board</span>' : ''}</span>${wt}</div>`; }
+      if (isParent) { if (r.w > 54 && r.h > 30) html = `<div class="hd"><span class="nm">${esc(node.name)}${isBoard ? ' <span class="bl" title="board">↗</span>' : ''}</span>${wt}</div>`; }
       else if (isBoard) { if (r.w > 40 && r.h > 26) { const b = node._missing ? 'missing ⚠' : node._cycle ? 'cycle ⟳' : 'empty board'; html = `<div class="leaf"><span class="nm">${esc(node.name)}</span><span class="badge">${b}</span></div>`; } }
       else { if (r.w > 40 && r.h > 26) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${wt}</div>`; }
       if (el._html !== html) { el.innerHTML = html; el._html = html; el._bar = null; }   // wipes any bar; hover re-adds

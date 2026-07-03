@@ -29,7 +29,6 @@ my lean noted · **[PROVEN]** = working code included · **[SCAFFOLD]** = starte
 | `server.mjs` | Dependency-free file-source server (`npx tilemon <file>`) | **[SCAFFOLD]** |
 | `package.json` | Makes it `npx`-runnable, zero deps | **[SCAFFOLD]** |
 | `state.sample.json` | The canonical file format, minimal | — |
-| `state.forty.json` | Real 175-issue Jira backlog, converted to the format (12 epics) — realistic test data | — |
 
 **To run the scaffold as-is:** rename `dashboard-reference.html` → `dashboard.html`, then
 `node server.mjs ./state.sample.json` and open `http://localhost:4000`. Note: the reference
@@ -190,7 +189,7 @@ reaching for.
 
 ### 4.1 File format
 
-See `state.sample.json` (minimal) and `state.forty.json` (real data). Schema:
+See `state.sample.json` (minimal). Schema:
 
 ```jsonc
 {
@@ -287,8 +286,8 @@ thrown away.
   plumbing. Local, monitor-friendly, shareable.
 - **v2 — Jira as a second (read-only) source.** Adapter maps epic→story→subtask to the tree and
   Jira status → TileMon status. **Needs zero new auth on the write side** (Jira owns writes).
-  Weight lives in your layer keyed by ticket id. You already have Atlassian connected; one project
-  (`FO`) is the test case — `state.forty.json` is that project, pre-converted.
+  Weight lives in your layer keyed by ticket id. A single Jira project makes a natural first test
+  case — export it to the file format and point the server at it.
 - **v3 — real push.** Swap polling/file-watch for webhooks/SSE from sources. Renderer unchanged.
 - **v4 — mounts.** Mount another TileMon instance as a source (tree-of-trees; per-team boards
   under your master root). Heat rolls up across mounts for free.
@@ -361,7 +360,7 @@ Domain availability was not confirmable (shared GoDaddy quota was exhausted) —
    `dashboard-reference.html` → `dashboard.html`.
 2. Apply §4.5 (feed the renderer from `/api/state`, add SSE refresh, POST weight on drag-end,
    status→heat adapter).
-3. `node server.mjs ./state.forty.json` → open the browser → drag your real epics around, watch
+3. `node server.mjs ./state.sample.json` → open the browser → drag the items around, watch
    it persist to the file.
 4. Write a 10-line agent script that `POST`s `{path, status:"blocked"}` and watch the tile glow
    live. That's the whole thesis, working.

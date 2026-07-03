@@ -5,10 +5,24 @@ description: Report task/agent status to a TileMon priority board (todo/in_progr
 
 # TileMon — report status to the board
 
-TileMon is a zero-sum treemap priority board: importance is on-screen area, the human owns the
-weights, and **agents set status**. Blocked work glows. Your entire integration is **one HTTP
-POST**, and it **upserts** (creates the board and any missing nodes on first write), so you can
-register your own work as you go.
+TileMon is an **attention-management tool, not a project tracker**: a zero-sum treemap that answers
+one question for the human — *what are my agents waiting on me for?* Importance is on-screen area,
+the human owns the weights, and **agents set status**. Only `blocked` glows (it needs the human);
+`in_progress` is a calm signal (an agent's working, no attention needed). Your entire integration
+is **one HTTP POST**, and it **upserts** (creates the board and any missing nodes on first write),
+so you can register your own work as you go — but keep it coarse (see below); noise defeats the tool.
+
+**It is a shared, long-running board — not this session's state.** The board runs as its own
+server (often started detached with `--daemon`, so it outlives any single session) and is written
+to by **many agents over time**: future sessions, agents on other projects, and unattended or
+scheduled ones — often at the same time. You are just one of those clients. So:
+- Your job is narrow: report the status of **your own** tracked tasks, by stable `path`. You are
+  **not** the board's owner or bookkeeper, and you are **not** tracking the other agents' work.
+- Don't try to hold the whole board in your head, poll it to "monitor" everything, or keep your
+  session alive to watch it. When you've reported, you can move on — the server persists and other
+  agents keep updating their own tiles. The **human** watches the board; agents just report into it.
+- Address by stable `board`+`path` so a *different* agent (or a later session) that resumes the
+  same task lands on the same tile instead of creating a duplicate.
 
 ## Reporting status (the core — this is 95% of it)
 
@@ -49,6 +63,21 @@ reshuffle priorities, only flag and (via upsert) add.
   `Internal`) — a group tile that contains the project includes. Bucket weight = its importance
   (its size on screen).
 
+## One board across many repos (same machine)
+
+A board can span **multiple repos/workspaces on one machine** — you just run a single shared server
+instead of one per project:
+
+- **Run one server on the default machine-wide board** — `npx tilemon --daemon` serves `~/.tilemon`,
+  which is the default. Every agent, in *any* local repo, already targets `http://localhost:4000`, so
+  they all report into that one board. Don't start a second server (and don't use `--project`, which
+  scopes a board to a single repo) — everything converges on `~/.tilemon`.
+- **When setting up, survey every root the human names** (e.g. `~/work`, `~/side-projects`),
+  not just the current directory — a board per project across all of them. A **bucket per workspace**
+  is usually the natural top level.
+- **Different machines can't share a `localhost` board** — that needs a hosted TileMon (not yet
+  built). For now, one machine = one shared local board; treat cross-machine as out of scope and say so.
+
 ## Bootstrapping a project (setup)
 
 When asked to **set up TileMon for a project/workspace**, structure and importance are the
@@ -71,6 +100,12 @@ The loop:
    drop Z") — a board per project grouped into a few named, weighted buckets. Reacting to a
    written draft is lower-friction than multiple-choice prompts, so prefer it; reserve a formal
    question for a *genuine* either/or blocker, not for things you can just propose a default for.
+
+**Keep the surface coarse — this is the cardinal rule.** Bootstrap builds *structure* (buckets +
+project boards), **not a task list**. Do NOT seed granular tasks/tickets — that makes the board
+busy and *costs* the human attention, which is the one thing the tool exists to protect. Detail
+belongs in drill-down and arrives naturally as agents flag their live work. If the board ever feels
+busy, the fix is to *subtract*, not add.
 3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
    by writing files. The server live-reloads, so the human watches the board fill in as you go.
 
@@ -82,19 +117,19 @@ then set weights.
 ```bash
 U=${TILEMON_URL:-http://localhost:4000}
 # 1. a board per project (bare; returns its slug)
-curl -s -X POST $U/api/board -d '{"name":"Chessku","slug":"chessku"}'          # -> {"slug":"chessku"}
-curl -s -X POST $U/api/board -d '{"name":"EulogySong","slug":"eulogy-song"}'
+curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp"}'            # -> {"slug":"webapp"}
+curl -s -X POST $U/api/board -d '{"name":"API","slug":"api"}'
 # 2. buckets on the home board (a bucket is just an item you add into); "tilemon" is the seeded home board
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","kind":"item","name":"Products"}'   # -> node id "products"
 # 3. include the EXISTING project boards into the bucket
-curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"chessku"}'
-curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"eulogy-song"}'
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"webapp"}'
+curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"api"}'
 # 4. weight the bucket (importance = size); reorganise later with /api/move
 curl -s -X POST $U/api/weight -d '{"board":"tilemon","path":"products","weight":3}'
 ```
 
 Node ids are derived from the name/slug (e.g. bucket "Products" → `products`, an include of
-`chessku` → `chessku`), so address children as `products.chessku`. Re-running reconciles: `GET
+`webapp` → `webapp`), so address children as `products.webapp`. Re-running reconciles: `GET
 /api/state?board=tilemon` first, respect what's already placed and its weights, and only add
 what's missing — never overwrite the human's arrangement.
 

@@ -1,16 +1,22 @@
 # TileMon
 
-A priority board where **importance is space**. The canvas is fixed, so making one
-thing bigger shrinks everything else — a zero-sum map that won't let you pretend ten
-things are all urgent. Hand tasks to your agents; when one gets stuck, it glows.
+**An attention-management tool, not a project manager.** The one question it answers is
+*what are my agents waiting on me for?* Importance is **space** on a fixed canvas, so making
+one thing bigger shrinks everything else — a zero-sum map that won't let you pretend ten things
+are all urgent. Hand work to your agents; when one gets **stuck, it glows** and pulls you in.
+Everything that's fine stays quiet. If a feature would add noise instead of directing attention,
+it doesn't belong here.
 
 ```
-npx tilemon           # serves ./.tilemon (created on first run); or: npx tilemon ./some-dir
+npx tilemon           # serves ~/.tilemon — one board for the whole machine (created on first run)
 ```
 
 …boots a local server, serves the board at `http://localhost:4000`, and reads/writes a
-directory of JSON boards (default `./.tilemon`). Point an always-on monitor at it. Agents flag status over HTTP
-(and can populate an empty board from scratch); you own the weights by dragging tiles.
+directory of JSON boards. By default that's `~/.tilemon`, so **every local repo shares one board** —
+which is what a cross-project tool wants. Want a board scoped to just one repo instead? `npx tilemon
+--project` (serves `./.tilemon`), or point it at any explicit folder: `npx tilemon ./some-dir`.
+Point an always-on monitor at it. Agents flag status over HTTP (and can populate an empty board
+from scratch); you own the weights by dragging tiles.
 
 Run it detached so it outlives the terminal (or the agent) that started it — no extra tooling,
 just Node:
@@ -19,6 +25,11 @@ just Node:
 npx tilemon --daemon    # start in the background (survives this shell); --stop to kill it
 npx tilemon --stop      # stop the backgrounded server
 ```
+
+**One board across many local repos.** This is the default — `~/.tilemon` is machine-wide, so one
+server covers every repo. Agents in any repo target `http://localhost:4000` by default, so they all
+land on the same board; just don't start a second server elsewhere. (Spanning *different machines*
+needs a hosted TileMon, which isn't built yet.)
 
 Want it back after a reboot? That's your OS's job, not the tool's — add `npx tilemon --daemon`
 to your startup (Login Items on macOS, a systemd user unit on Linux, Task Scheduler on Windows).
@@ -41,9 +52,11 @@ npm run demo        # serves ./examples/boards (a native board + a mounted one +
 - **Any item can carry a status, at any depth.** It's a uniformly recursive tree — an
   item may contain items *and* hold its own status. A whole group can be `blocked` (the
   branch is stuck) without lying about a child.
-- **Status renders as heat.** `blocked` glows; `done` drops off the board. An item's own
-  status sets a heat *floor*, and heat also rolls up area-weighted from its contents — so
-  a stuck thing deep in a group makes the whole group glow, visible from across the room.
+- **Heat = "needs you". Only `blocked` glows.** `done` drops off the board. `in_progress`
+  carries **no heat** — an agent that's working doesn't want your attention; it gets a **calm
+  "working" dot** instead (a separate, quiet channel, so you can see activity without being
+  pulled by it). Heat rolls up area-weighted, so a stuck thing deep in a group makes the whole
+  group glow, visible from across the room — while the surface stays coarse and calm otherwise.
 - **`done` is reversible.** Finished items drop off so the board shows live work, but the
   **done** toggle brings them back (dimmed) so you can re-open one — hiding never means
   losing.
@@ -145,7 +158,7 @@ design, architecture, and roadmap.
 
 ```bash
 npm run demo    # serve ./examples/boards
-npm start       # serve ./boards (created empty; agents populate it)
+npm start       # serve ~/.tilemon (the default machine-wide board)
 npm test        # headless renderer checks (no browser needed)
 ```
 
