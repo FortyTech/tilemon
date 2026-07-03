@@ -160,7 +160,24 @@ reacting-to-a-draft beats dragging tiles. Ongoing maintenance is different: rewe
 in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST /api/status`
 (above); only the initial structure is built here — and only ever through the API.
 
-### Final setup step — install the Stop hook (core plumbing, opt-out)
+### Setup step — always ask what should grab their attention (write attention.md)
+
+The board only earns its keep once it knows what deserves *their* attention, so **always ask** — never
+leave `attention.md` blank and never assume they'll write it later. After the structure's built, ask
+the human what they want surfaced, offering a few concrete examples to react to (they pick, edit, or
+add their own). Same rule as weights: you **elicit and record, you never impose or guess**. Obvious
+starters to offer:
+- uncommitted changes sitting in a repo
+- committed-but-unpushed work
+- failing tests / a red CI run
+- an open PR awaiting their review (or their PR blocked on requested changes)
+- a dependency with a known vulnerability
+- a client message / email unanswered for more than a day or two
+
+Write the agreed rules into `~/.tilemon/attention.md` — global, or under a `# board: <slug>` section
+if a rule is repo-specific. If they genuinely want none yet, leave the template — but *ask first*.
+
+### Then install the Stop hook (core plumbing, opt-out)
 
 The board staying current depends on this, so **install it by default as part of setup** — it's core
 plumbing, not an optional extra. **Don't ask a yes/no**: add it, then tell the human you did and how to

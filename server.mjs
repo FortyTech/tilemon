@@ -456,13 +456,15 @@ const ATTENTION_TEMPLATE = `# attention.md — your TileMon attention rules
 # pushes however suits you). Global rules apply everywhere; add "# board: <slug>" or
 # "# node: <board>.<path>" to target specifics.
 
-# --- global ---
-# (examples — replace with your own)
-# - Uncommitted changes in a repo should be blocked until committed or stashed.
-# - A dependency with a known CVE -> blocked.
+# --- global --- (examples — replace with your own)
+# - Uncommitted changes in a repo -> blocked until committed or stashed.
+# - Committed-but-unpushed work -> blocked.
+# - Failing tests / a red CI run -> blocked.
+# - An open PR awaiting my review, or my PR with requested changes -> blocked.
+# - A dependency with a known vulnerability -> blocked.
 
 # --- board: example-project ---
-# - A client email left unanswered for >2 days -> blocked.
+# - A client email left unanswered for more than a day or two -> blocked.
 
 # --- node: example-project.billing ---
 # - Billing errors in the logs -> blocked.
