@@ -82,16 +82,17 @@ async function load(s) {
   }
 }
 
-// starting board: URL slug wins; else a POPULATED real board (your own, once it has content);
-// else the tutorial board; else an empty real board; else whatever exists. The tutorial never
-// hijacks a board you've populated, and never vanishes — it's always in the switcher.
+// starting board: URL slug wins; else the `tilemon` home/master board once it's populated; else
+// the tutorial; else the (empty) home; else any real board. The home board is the root you land
+// on when set up; the tutorial only takes over on a fresh install and stays in the switcher.
 const pick = bs => {
-  const real = b => b.slug !== 'tutorial';
-  const b = bs.find(b => real(b) && b.toolbar !== false && b.source === 'native' && b.items > 0)
-         || bs.find(b => real(b) && b.source === 'native' && b.items > 0)
-         || bs.find(b => b.slug === 'tutorial')
-         || bs.find(b => real(b) && b.source === 'native')
-         || bs.find(real) || bs[0] || {};
+  const get = s => bs.find(b => b.slug === s);
+  const home = get('tilemon'), tut = get('tutorial');
+  const b = (home && home.items > 0 && home)          // your home board, once it has content
+         || tut                                        // else the tutorial (fresh install)
+         || home                                       // else the (still-empty) home board
+         || bs.find(b => b.slug !== 'tutorial' && b.source === 'native')
+         || bs[0] || {};
   return b.slug;
 };
 const boards = await listBoards();
