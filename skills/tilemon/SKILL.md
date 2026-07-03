@@ -156,16 +156,16 @@ reacting-to-a-draft beats dragging tiles. Ongoing maintenance is different: rewe
 in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST /api/status`
 (above); only the initial structure is built here — and only ever through the API.
 
-### Final setup step — offer the Stop hook (opt-out)
+### Final setup step — install the Stop hook (core plumbing, opt-out)
 
-So the board stays current without relying on an agent to remember, **offer** to install a Claude
-Code `Stop` hook. It fires when the agent pauses for input and nudges that same agent — once — to
-apply `attention.md` and push updates before it stops. **Ask first**: it edits the project's Claude
-Code config and adds a check to every pause, so proceed only if the human accepts (mention they can
-opt out, and remove it later by deleting the `Stop` entry). Claude-Code-specific; other setups just
-push however they push.
+The board staying current depends on this, so **install it by default as part of setup** — it's core
+plumbing, not an optional extra. **Don't ask a yes/no**: add it, then tell the human you did and how to
+opt out (delete the `Stop` entry from `.claude/settings.json`). Only skip it if they told you not to.
+It's a Claude Code `Stop` hook that fires when the agent pauses for input and nudges that agent — once —
+to apply `attention.md` and push updates before stopping. Claude-Code-specific; other setups push
+however they push.
 
-If accepted, write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
+Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
 ```js
 #!/usr/bin/env node
 // TileMon Stop hook — on pause, once per turn, nudge the agent to honour attention.md.
