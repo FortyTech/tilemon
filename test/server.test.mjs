@@ -55,6 +55,18 @@ try {
   ok((await api('POST', '/api/board', {})).status === 400, 'create board needs a name');
   await api('POST', '/api/board', { name: 'Hex Drop' }); // -> hex-drop
 
+  // --- folder↔board link: dir on boards + /api/resolve (longest-prefix, boundary-aware) ---
+  await api('POST', '/api/board', { name: 'Alpha', slug: 'alpha', dir: '/tmp/work/alpha' });
+  await api('POST', '/api/board', { name: 'Alpha Sub', slug: 'alpha-sub', dir: '/tmp/work/alpha/sub' });
+  ok((await api('GET', '/api/boards')).json.find(b => b.slug === 'alpha').dir === '/tmp/work/alpha', 'board carries its dir');
+  ok((await api('GET', '/api/resolve?dir=/tmp/work/alpha')).json.board === 'alpha', 'resolve: exact dir match');
+  ok((await api('GET', '/api/resolve?dir=/tmp/work/alpha/sub/deep')).json.board === 'alpha-sub', 'resolve: longest-prefix (nested wins over parent)');
+  ok((await api('GET', '/api/resolve?dir=/tmp/work/alpha/other')).json.board === 'alpha', 'resolve: prefix -> parent board');
+  ok((await api('GET', '/api/resolve?dir=/tmp/work/alphabet')).status === 404, 'resolve: no false match across a path boundary');
+  ok((await api('GET', '/api/resolve?dir=/tmp/elsewhere')).status === 404, 'resolve: untracked folder -> 404');
+  await api('PATCH', '/api/board', { slug: 'word-duel', dir: '/tmp/work/wd' });   // backfill an existing board
+  ok((await api('GET', '/api/resolve?dir=/tmp/work/wd')).json.board === 'word-duel', 'PATCH sets dir on an existing board; resolve finds it');
+
   // --- buckets: a group is just an item you add children into ---
   ok((await api('POST', '/api/node', { board: 'tilemon', kind: 'item', name: 'Games' })).status === 200, 'add group item');
 

@@ -15,12 +15,14 @@
 // Routes:
 //   GET    /  ·  /boards/<slug>     -> dashboard (single-page app; reads the slug from the URL)
 //   GET    /board.js                -> renderer module
-//   GET    /api/boards              -> [{ slug, name, visibility, source }]
+//   GET    /api/boards              -> [{ slug, name, visibility, source, dir? }]
+//   GET    /api/resolve?dir=<abs>   -> { board, dir } : the board whose `dir` is the longest prefix of <abs> (folder -> board)
 //   GET    /api/state?board=<slug>  -> resolved tree (includes -> navigable summary tiles, acyclic)
 //   GET    /api/events              -> Server-Sent Events; "change" on any write
 //   POST   /api/status {board,path,status,note?,name?} -> AGENT: upsert path, set status/note
 //   POST   /api/weight {board,path,weight}             -> HUMAN: set weight (node must exist)
-//   POST   /api/board  {name,slug?,source?}            -> HUMAN: create a bare board (placed nowhere) -> { slug }
+//   POST   /api/board  {name,slug?,source?,dir?}        -> HUMAN: create a bare board -> { slug }; `dir` links it to a folder
+//   PATCH  /api/board  {slug,dir?,name?}               -> HUMAN: set the folder link (dir) / rename an existing board
 //   POST   /api/node   {board,path,kind:item|include,name?,target?} -> HUMAN: add a plain item, or an include of an existing board
 //   PATCH  /api/node   {board,path,name?,toolbar?}     -> HUMAN: rename / set app-shell flag
 //   DELETE /api/node   {board,path}                    -> HUMAN: remove a node (referenced board file left intact)
@@ -114,7 +116,7 @@ async function listBoards() {
   const out = [];
   for (const f of files) {
     const slug = f.slice(0, -5);
-    try { const b = await readBoard(slug); out.push({ slug, name: b.name || slug, visibility: b.visibility || 'private', source: b.source || 'native', toolbar: !!b.toolbar, items: (b.children || []).length }); }
+    try { const b = await readBoard(slug); out.push({ slug, name: b.name || slug, visibility: b.visibility || 'private', source: b.source || 'native', toolbar: !!b.toolbar, items: (b.children || []).length, dir: b.dir || undefined }); }
     catch { /* skip unreadable */ }
   }
   return out;
@@ -253,6 +255,23 @@ const server = http.createServer(async (req, res) => {
     try { json(res, 200, await listBoards()); } catch (e) { json(res, 500, { error: String(e) }); }
     return;
   }
+  if (req.method === 'GET' && p === '/api/resolve') {   // folder -> board: the board whose `dir` is the longest prefix of the query
+    const q = url.searchParams.get('dir');
+    if (!q) return json(res, 400, { error: 'missing dir' });
+    try {
+      const norm = s => s.replace(/\/+$/, '');
+      const target = norm(q);
+      let best = null;
+      for (const b of await listBoards()) {
+        if (!b.dir) continue;
+        const d = norm(b.dir);
+        if (target === d || target.startsWith(d + '/')) { if (!best || d.length > norm(best.dir).length) best = b; }
+      }
+      if (!best) return json(res, 404, { error: 'no board maps to ' + q });
+      json(res, 200, { board: best.slug, dir: best.dir });
+    } catch (e) { json(res, 500, { error: String(e) }); }
+    return;
+  }
   if (req.method === 'GET' && p === '/api/state') {
     const slug = url.searchParams.get('board');
     if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
@@ -378,7 +397,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && p === '/api/board') {   // HUMAN: create a bare board (placed nowhere); returns its slug
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
-      const { name, slug: wantSlug, source } = await body(req);
+      const { name, slug: wantSlug, source, dir } = await body(req);
       if (!name || !String(name).trim()) return json(res, 400, { error: 'missing name' });
       const nm = String(name).trim();
       const existing = new Set((await listBoards()).map(b => b.slug));
@@ -391,9 +410,25 @@ const server = http.createServer(async (req, res) => {
         slug = uniq(slugify(nm), existing);
       }
       const src = (typeof source === 'string' && source.trim()) ? source.trim() : 'native';
-      await writeBoard(slug, { name: nm, visibility: 'private', source: src, children: [] });
+      const board = { name: nm, visibility: 'private', source: src, children: [] };
+      if (typeof dir === 'string' && dir.trim()) board.dir = dir.trim();   // the folder this board maps to (the link)
+      await writeBoard(slug, board);
       broadcast();
       json(res, 200, { ok: true, slug });
+    } catch (e) { json(res, 400, { error: String(e) }); }
+    return;
+  }
+  if (req.method === 'PATCH' && p === '/api/board') {   // HUMAN: set board-level metadata — the `dir` link (and/or name)
+    if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
+    try {
+      const { slug, dir, name } = await body(req);
+      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing slug' });
+      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
+      const board = await readBoard(slug);
+      if (typeof dir === 'string') { const d = dir.trim(); if (d) board.dir = d; else delete board.dir; }   // '' clears the link
+      if (name != null && String(name).trim()) board.name = String(name).trim();
+      await writeBoard(slug, board); broadcast();
+      json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }

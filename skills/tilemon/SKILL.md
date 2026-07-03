@@ -33,10 +33,12 @@ scheduled ones — often at the same time. You are just one of those clients. So
    it** — this skill is the complete manual; treat the server as a black box behind the API.
    (TileMon may itself be one of the projects on the board — that's fine; just don't crack open
    its implementation to operate it.)
-2. **Address your work.** `board` = the project's slug (usually the repo/project name).
-   `path` = a stable, dotted id for your task within that board, e.g. `api.refactor-auth`.
-   **Reuse the same board + path across a task's whole life** — that's how a reconnecting agent
-   lands back on the same tile. Address by id, never by display name.
+2. **Address your work.** Find your `board` *with certainty* — don't guess from the folder name and
+   never invent a new board: resolve it from the folder you're working in —
+   `GET /api/resolve?dir=<abs cwd>` → `{board}` (matches the board whose `dir` is the longest prefix
+   of your path). If it 404s, this folder isn't tracked — leave it, don't create one. `path` = a
+   stable, dotted id for your task within that board, e.g. `api.refactor-auth`. **Reuse the same
+   board + path across a task's whole life** so a reconnecting agent lands back on the same tile.
 3. **POST it.** `status` ∈ `todo | in_progress | waiting | blocked | done`. Include a `note` — your
    message (what you're doing / what you need); it shows in the tile's hover actions.
    ```bash
@@ -153,15 +155,18 @@ New nodes are born at weight 1 (equal), which is exactly the neutral starting po
 
 ```bash
 U=${TILEMON_URL:-http://localhost:4000}
-# 1. a board per project (bare; returns its slug)
-curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp"}'            # -> {"slug":"webapp"}
-curl -s -X POST $U/api/board -d '{"name":"API","slug":"api"}'
+# 1. a board per project (bare; returns its slug). ALWAYS pass `dir` = the project's absolute folder —
+#    that's the folder↔board link. It lets any agent later resolve "which board is this folder?" with
+#    certainty (GET /api/resolve), instead of guessing a slug or inventing a duplicate board.
+curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp","dir":"/home/you/work/webapp"}'   # -> {"slug":"webapp"}
+curl -s -X POST $U/api/board -d '{"name":"API","slug":"api","dir":"/home/you/work/api"}'
 # 2. buckets on the home board (a bucket is just an item you add into); "tilemon" is the seeded home board
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","kind":"item","name":"Products"}'   # -> node id "products"
 # 3. include the EXISTING project boards into the bucket (born at weight 1 — DON'T set weights)
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"webapp"}'
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"api"}'
 # then: leave weights equal. The human drags to allocate importance. Reorganise later with /api/move.
+# (Set dir on an existing board later with: PATCH /api/board {"slug":"webapp","dir":"..."} )
 ```
 
 Node ids are derived from the name/slug (e.g. bucket "Products" → `products`, an include of
@@ -205,27 +210,35 @@ It's a Claude Code `Stop` hook that fires when the agent pauses for input and nu
 to apply `attention.md` and push updates before stopping. Claude-Code-specific; other setups push
 however they push.
 
-Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps). It reads the operator's
-LIVE `attention.md` and injects the actual rules into its nudge, demanding a per-rule check —
-because rules are arbitrary free text, evaluation is the agent's job; the hook just makes the rules
-*present and demanded* so they can't be forgotten (it computes nothing, hard-codes no rule):
+Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps). It **resolves this folder
+to its board** (`GET /api/resolve` — folder → board via the `dir` link) so the agent flags the right
+tile and never invents one, then injects the operator's LIVE `attention.md` rules and demands a
+per-rule check. It stays silent (no block) if the folder isn't tracked or the board's unreachable —
+nothing to flag. It computes nothing and hard-codes no rule (evaluation is the agent's job):
 ```js
 #!/usr/bin/env node
-// TileMon Stop hook — inject the operator's live attention.md rules on pause and demand a per-rule check.
+// TileMon Stop hook — resolve folder→board, inject live attention.md rules, demand a per-rule check.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-let s = ''; process.stdin.on('data', c => (s += c)).on('end', () => {
+let s = ''; process.stdin.on('data', c => (s += c)).on('end', async () => {
   try { if (JSON.parse(s).stop_hook_active === true) process.exit(0); } catch {}   // already nudged this turn → let it stop
+  const url = process.env.TILEMON_URL || 'http://localhost:4000';
+  const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  let board = null;
+  try {
+    const r = await fetch(`${url}/api/resolve?dir=${encodeURIComponent(cwd)}`);
+    if (r.status === 404) process.exit(0);            // folder not tracked → stay quiet
+    if (r.ok) board = (await r.json()).board;
+  } catch { process.exit(0); }                         // board unreachable → don't block
+  if (!board) process.exit(0);
   let rules = '';
   try { rules = readFileSync(join(homedir(), '.tilemon', 'attention.md'), 'utf8')
     .split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).join('\n').trim(); } catch {}
-  const url = process.env.TILEMON_URL || 'http://localhost:4000';
-  const reason = `[TileMon hook] Before you stop, update the board via the tilemon skill (POST /api/status to ${url}). `
-    + `If you're pausing because you need the human, flag your task 'waiting' (need a decision/input) or 'blocked' (something's wrong) with a note. `
-    + (rules ? `Then check EACH of these attention rules against what you're actually working on right now, and flag any that match (evaluate them one by one, don't skip):\n${rules}\n`
-             : `(No attention.md rules are set.) `)
-    + `Only flag things in your current working scope; if nothing matches, just stop.`;
+  const reason = `[TileMon hook] This folder is TileMon board '${board}' — flag THAT board, never create a new one. `
+    + `Before you stop: if you're pausing because you need the human, flag 'waiting' (need a decision/input) or 'blocked' (something's wrong) with a note, via the tilemon skill (POST /api/status to ${url}).`
+    + (rules ? ` Then check EACH of these attention rules against what you're working on and flag any that match (one by one, don't skip):\n${rules}\n` : ` `)
+    + `If nothing matches, just stop.`;
   process.stdout.write(JSON.stringify({ decision: 'block', reason }));
   process.exit(0);
 });
