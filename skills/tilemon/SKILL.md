@@ -205,14 +205,28 @@ It's a Claude Code `Stop` hook that fires when the agent pauses for input and nu
 to apply `attention.md` and push updates before stopping. Claude-Code-specific; other setups push
 however they push.
 
-Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
+Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps). It reads the operator's
+LIVE `attention.md` and injects the actual rules into its nudge, demanding a per-rule check —
+because rules are arbitrary free text, evaluation is the agent's job; the hook just makes the rules
+*present and demanded* so they can't be forgotten (it computes nothing, hard-codes no rule):
 ```js
 #!/usr/bin/env node
-// TileMon Stop hook — on pause, once per turn, nudge the agent to honour attention.md.
+// TileMon Stop hook — inject the operator's live attention.md rules on pause and demand a per-rule check.
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 let s = ''; process.stdin.on('data', c => (s += c)).on('end', () => {
   try { if (JSON.parse(s).stop_hook_active === true) process.exit(0); } catch {}   // already nudged this turn → let it stop
-  process.stdout.write(JSON.stringify({ decision: 'block', reason:
-    "[TileMon hook] If you're pausing because you need the human on a board-tracked task, flag it 'waiting' (need a decision/input) or 'blocked' (something broke) with a short note via the tilemon skill (POST /api/status to $TILEMON_URL, else http://localhost:4000); also apply any cheap ~/.tilemon/attention.md rules. Otherwise just stop." }));
+  let rules = '';
+  try { rules = readFileSync(join(homedir(), '.tilemon', 'attention.md'), 'utf8')
+    .split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).join('\n').trim(); } catch {}
+  const url = process.env.TILEMON_URL || 'http://localhost:4000';
+  const reason = `[TileMon hook] Before you stop, update the board via the tilemon skill (POST /api/status to ${url}). `
+    + `If you're pausing because you need the human, flag your task 'waiting' (need a decision/input) or 'blocked' (something's wrong) with a note. `
+    + (rules ? `Then check EACH of these attention rules against what you're actually working on right now, and flag any that match (evaluate them one by one, don't skip):\n${rules}\n`
+             : `(No attention.md rules are set.) `)
+    + `Only flag things in your current working scope; if nothing matches, just stop.`;
+  process.stdout.write(JSON.stringify({ decision: 'block', reason }));
   process.exit(0);
 });
 ```
