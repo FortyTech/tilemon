@@ -69,6 +69,17 @@ things `done`, surface anything the human asked to see. The rules are prose prec
 judgment, and you evaluate them with **your own tools** (rule about git → run git; about logs → read
 them). TileMon prescribes no mechanism and ships no rule-specific tooling.
 
+**Flagging is automatic — NEVER ask the human whether to set a status. Just set it.** Status is the
+one surface you own outright (it's reversible, and it can't touch weights or structure), which is
+exactly why it's safe to write without permission. Asking "want me to flag this?" defeats the entire
+point of the board — it's meant to reflect reality *without* the human tending it. So: if a rule
+matches, flag it silently; if it doesn't, leave it. Never a question. (Weights and structure are the
+opposite — those are the human's; never touch *those* without them. Status is always yours.)
+
+**Only flag what's in your working scope** — the repo/project you're actually operating in. Don't roam
+into other repos to check them, and don't flag a repo you're not working in (a session working *there*,
+or a scheduled sweep, catches it). In-scope → flag automatically; out-of-scope → leave it, no comment.
+
 How those pushes get generated is the operator's choice — you doing it live as you work, a `Stop` hook
 when you pause, CI, a scheduled job, whatever suits them — all of it just `POST`s status. The natural
 default is to push from where the work is happening; the only constant is that updates are *sent to*
