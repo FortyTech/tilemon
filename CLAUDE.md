@@ -126,13 +126,21 @@ Playwright. Eyeball the actual board in a real browser when iterating on visuals
 
 ## Next (not built)
 
-- **Publish `0.1.0`** (this multi-board version) — `0.0.1` is already up as the name claim.
-- **Include-navigation UX** in a real browser: history-based back is wired (`/boards/<slug>`
-  + `popstate`); confirm the feel, and the summary-heat-reason legibility note from the
-  SPEC revisions is still open.
-- **Reply channel** (board→agent): `POST /api/reply` + agent polls its inbox — the "action
-  the things" half. Deliberately deferred.
+- **`attention.md` — user-defined attention rules (NEXT, ahead of the move UI).** Free-text,
+  agent-prompt-style rules for how agents set status (e.g. "uncommitted changes → blocked until
+  committed"). Executed by an agent on a trigger (on-run in a repo and/or a scheduled refresh),
+  which reads the rules and POSTs status — core stays dumb. **Rules belong to the operator/viewer,
+  not the board** (same personal-lens category as weight; never baked into shared data): lives
+  operator-side (`~/.tilemon/attention.md` locally; stays client-side in SaaS). Per-board/per-node
+  granularity by *targeting inside* the file (keyed by slug/path). Guardrail: a few glow-triggers,
+  not auto-spawned task lists. Deferred sub-layer: board-owner default rules overridden per viewer.
+- **Move UI (E):** a "move" icon in the hover bar arms move-mode; drag drops the tile into the
+  highlighted innermost container (reuse the gold target highlight); calls `/api/move`.
+- **"Growing the board"** skill note: incremental add of a workspace/project; reshape with `/api/move`.
+- **Reply channel** (board→agent): `POST /api/reply` + agent polls its inbox — the "action the
+  things" half. Deliberately deferred (and it's messaging, never board-overrides-agent).
 - **v2: Jira as a read-only second source** — the `jira://` board type is stubbed; wire the
   adapter (a Jira project; weight kept in a TileMon sidecar keyed by ticket id) and add it as an
   `add`-type in the UI once the source is real. See SPEC §5.
-- Task-seeding on bootstrap (populate boards from state/next-steps docs) — parked, next up.
+- Heat-reason legibility (own-status vs rolled-up) and the frame-as-tile header — still open.
+- Killed: task-seeding on bootstrap — it adds noise; an attention tool subtracts, it doesn't seed.
