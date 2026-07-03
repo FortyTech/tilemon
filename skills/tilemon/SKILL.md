@@ -201,7 +201,7 @@ Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
 let s = ''; process.stdin.on('data', c => (s += c)).on('end', () => {
   try { if (JSON.parse(s).stop_hook_active === true) process.exit(0); } catch {}   // already nudged this turn → let it stop
   process.stdout.write(JSON.stringify({ decision: 'block', reason:
-    "[TileMon Stop hook — an automated nudge, NOT a message from the user] Before you stop: if you're pausing because you need the human on a task tracked on the TileMon board, flag it — 'waiting' (you need a decision/input) or 'blocked' (something went wrong) — with a short note, via POST /api/status to $TILEMON_URL (else http://localhost:4000) using the tilemon skill. Also apply any ~/.tilemon/attention.md rules cheap to check. Otherwise just stop — don't invent a task or do busywork." }));
+    "[TileMon hook] If you're pausing because you need the human on a board-tracked task, flag it 'waiting' (need a decision/input) or 'blocked' (something broke) with a short note via the tilemon skill (POST /api/status to $TILEMON_URL, else http://localhost:4000); also apply any cheap ~/.tilemon/attention.md rules. Otherwise just stop." }));
   process.exit(0);
 });
 ```
