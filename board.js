@@ -18,12 +18,14 @@
 // _board (owning board) + _path (local path), so edits land right even across nested boards.
 
 const PAD = 5, HEADER = 22, INSET = 2, TOOLBAR_H = 36, STATUS_H = 22, BAR_MIN_W = 150, BAR_MIN_H = 22;
-// Heat = "needs your attention". Only `blocked` glows. `in_progress` is deliberately 0 — an agent
-// that's working doesn't want your attention; it gets a calm "working" dot instead (a separate,
-// quiet channel). This is an attention tool, not a status board: keep the loud channel for blocked.
-const STATUS_HEAT = { todo: 0, in_progress: 0, blocked: 1 };
-const STATUSES = ['todo', 'in_progress', 'blocked', 'done'];
-const STAT_LABEL = { todo: 'todo', in_progress: 'in progress', blocked: 'blocked', done: 'done' };
+// Heat = "how loudly this needs your attention". Two "needs-you" levels: `waiting` (needs your
+// input — a decision/answer/approval; glows amber, no pulse) and `blocked` (something's wrong —
+// louder: red + pulse). `in_progress` is deliberately 0 — a working agent doesn't want your
+// attention; it gets a calm "working" dot (a separate, quiet channel). The pulse fires at heat>0.66,
+// so blocked pulses and waiting doesn't — severity, for free, from the existing gradient.
+const STATUS_HEAT = { todo: 0, in_progress: 0, waiting: 0.5, blocked: 1 };
+const STATUSES = ['todo', 'in_progress', 'waiting', 'blocked', 'done'];
+const STAT_LABEL = { todo: 'todo', in_progress: 'in progress', waiting: 'waiting', blocked: 'blocked', done: 'done' };
 const DONE_COLOR = 'rgb(74,92,58)';
 
 const STYLE = `

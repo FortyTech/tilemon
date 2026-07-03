@@ -79,8 +79,7 @@ if (hasFlag('--daemon') || hasFlag('-d')) {
   process.exit(0);
 }
 
-const VALID_STATUS = new Set(['todo', 'in_progress', 'blocked', 'done']);
-const STATUS_HEAT = { todo: 0, in_progress: 0.5, blocked: 1 }; // done -> treated as 0 for summary
+const VALID_STATUS = new Set(['todo', 'in_progress', 'waiting', 'blocked', 'done']);
 const clients = new Set();
 
 // ---- slugs: a board is addressed by a filesystem-safe slug, never a path ----
@@ -456,13 +455,17 @@ const ATTENTION_TEMPLATE = `# attention.md — your TileMon attention rules
 # pushes however suits you). Global rules apply everywhere; add "# board: <slug>" or
 # "# node: <board>.<path>" to target specifics.
 
-# --- global ---
-# (examples — replace with your own)
-# - Uncommitted changes in a repo should be blocked until committed or stashed.
-# - A dependency with a known CVE -> blocked.
+# Two "needs-you" levels: waiting = needs my input/decision (amber); blocked = something is wrong,
+# louder (red). (Agents already auto-flag when they're stuck on you — these add ambient triggers.)
+
+# --- global --- (examples — replace with your own)
+# - Uncommitted or committed-but-unpushed changes in a repo -> waiting (nag me until it's clean).
+# - An open PR awaiting my review, or my PR with requested changes -> waiting.
+# - Failing tests / a red CI run -> blocked.
+# - Any obvious security issue (e.g. a vulnerable dependency) -> blocked.
 
 # --- board: example-project ---
-# - A client email left unanswered for >2 days -> blocked.
+# - A client message unanswered for more than a day or two -> waiting.
 
 # --- node: example-project.billing ---
 # - Billing errors in the logs -> blocked.
@@ -475,9 +478,10 @@ await mkdir(BOARDS, { recursive: true }).catch(() => {});
 if ((await listBoards()).length === 0) {
   await writeBoard('tilemon', { name: 'TileMon', visibility: 'private', source: 'native', toolbar: true, children: [] });
   await writeBoard('tutorial', { name: 'Tutorial', visibility: 'private', source: 'native', toolbar: true, children: [
-    { id: 'welcome', name: 'This is the Tutorial board — your own board is the default. Come back here any time from the board switcher.', weight: 4, status: 'todo' },
-    { id: 'blocked', name: 'It is an attention tool: blocked work GLOWS to pull you in — like this.', weight: 3, status: 'blocked' },
-    { id: 'working', name: 'The calm dot means an agent is working here. No glow — it does not need you yet.', weight: 2, status: 'in_progress' },
+    { id: 'welcome', name: 'This is the Tutorial board — your own board is the default. Come back any time from the board switcher.', weight: 4, status: 'todo' },
+    { id: 'blocked', name: 'blocked = something is wrong and needs you: glows red and pulses (loudest).', weight: 3, status: 'blocked' },
+    { id: 'waiting', name: 'waiting = an agent needs your input or a decision: glows amber (present, not urgent).', weight: 2, status: 'waiting' },
+    { id: 'working', name: 'in progress = an agent is working here: a calm dot, no glow — it does not need you.', weight: 2, status: 'in_progress' },
     { id: 'area', name: 'Importance is area — drag a tile to resize it; double-click to drill in.', weight: 1, status: 'todo' },
     { id: 'agents', name: 'Agents fill boards by POSTing status (see examples/agent.mjs).', weight: 1, status: 'todo' },
   ] });

@@ -48,14 +48,15 @@ npm run demo        # serves ./examples/boards (a native board + a mounted one +
   never grows, so weighting one thing up *takes* space from its siblings. You spend
   importance like a budget.
 - **Weight is yours; status is the agent's.** You set importance by dragging (or the
-  size slider), deliberately. Agents set status — `todo → in_progress → blocked → done`.
+  size slider), deliberately. Agents set status — `todo`, `in_progress`, `waiting` (needs your
+  input), `blocked` (something's wrong), `done`.
 - **Any item can carry a status, at any depth.** It's a uniformly recursive tree — an
   item may contain items *and* hold its own status. A whole group can be `blocked` (the
   branch is stuck) without lying about a child.
-- **Heat = "needs you". Only `blocked` glows.** `done` drops off the board. `in_progress`
-  carries **no heat** — an agent that's working doesn't want your attention; it gets a **calm
-  "working" dot** instead (a separate, quiet channel, so you can see activity without being
-  pulled by it). Heat rolls up area-weighted, so a stuck thing deep in a group makes the whole
+- **Heat = "how loudly it needs you."** Two needs-you levels: `waiting` glows **amber** (needs your
+  input — present, no rush); `blocked` glows **red and pulses** (something's wrong — louder). `done`
+  drops off. `in_progress` carries **no heat** — a working agent doesn't want your attention; it gets
+  a **calm "working" dot** instead (a separate, quiet channel). Heat rolls up area-weighted, so a stuck thing deep in a group makes the whole
   group glow, visible from across the room — while the surface stays coarse and calm otherwise.
 - **`done` is reversible.** Finished items drop off so the board shows live work, but the
   **done** toggle brings them back (dimmed) so you can re-open one — hiding never means
@@ -93,11 +94,12 @@ things that need *you* glow:
 
 ```
 # --- global ---
-- Uncommitted changes in a repo should be blocked until committed.
-- A client email unanswered >2 days → blocked.
+- Uncommitted or unpushed changes in a repo → waiting (nag me until it's clean).
+- A client email unanswered >2 days → waiting.
 
 # --- board: acme-portal ---
 - Failing CI → blocked.
+- Any obvious security issue → blocked.
 ```
 
 The rules are **yours** — a personal lens, like your weights, never baked into the shared board —
@@ -126,7 +128,7 @@ comes from); a node has children, and/or a `status`, or `include`s another board
   "children": [
     { "id": "api", "name": "API", "weight": 2, "children": [
       { "id": "refactor-auth", "name": "Refactor auth", "weight": 1,
-        "status": "blocked", "note": "need the staging DB password" }   // leaf: status + agent note
+        "status": "waiting", "note": "which auth provider — Clerk or Auth0?" }   // leaf: status + agent note
     ]},
     { "id": "team", "name": "Team Atlas", "weight": 1, "include": "team-atlas" }  // a navigable board tile
   ]

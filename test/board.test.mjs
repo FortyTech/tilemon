@@ -166,13 +166,18 @@ assert.ok(tb && !tile('__root'), 'a shell board renders the toolbar; the frame i
 tb.querySelector('#tbShell').onclick();
 assert.deepEqual((w.at(-1)), { k: 'tbar', b: 'shell', path: '', v: false }, 'toolbar shell toggle turns this board bare');
 
-// attention channels: `blocked` glows (hot); `in_progress` is a calm "working" dot with zero heat
+// attention channels + severity: in_progress = calm dot (no heat); waiting = amber glow, no pulse;
+// blocked = red glow + pulse (louder); todo = no heat.
 const chan = { name: 'Chan', _board: 'chan', _path: '', children: [
   { id: 'work', name: 'Work', weight: 1, status: 'in_progress', _board: 'chan', _path: 'work' },
+  { id: 'wait', name: 'Wait', weight: 1, status: 'waiting', _board: 'chan', _path: 'wait' },
   { id: 'stuck', name: 'Stuck', weight: 1, status: 'blocked', _board: 'chan', _path: 'stuck' },
+  { id: 'plain', name: 'Plain', weight: 1, status: 'todo', _board: 'chan', _path: 'plain' },
 ] };
 board.update(chan); raf.forEach(fn => fn());
-assert.ok(tile('work') && tile('work')._cls.has('working') && !tile('work')._cls.has('hot'), 'in_progress = calm working dot, never glows');
-assert.ok(tile('stuck') && tile('stuck')._cls.has('hot') && !tile('stuck')._cls.has('working'), 'blocked = glows (hot), no working dot');
+assert.ok(tile('work')._cls.has('working') && !tile('work')._cls.has('hot'), 'in_progress = calm working dot, never glows');
+assert.ok(tile('stuck')._cls.has('hot') && !tile('stuck')._cls.has('working'), 'blocked = glows (hot/pulse), no working dot');
+assert.ok(!tile('wait')._cls.has('hot') && !tile('wait')._cls.has('working'), 'waiting glows but does NOT pulse (softer than blocked)');
+assert.ok(tile('wait').style.background !== tile('plain').style.background, 'waiting carries heat (glows amber); todo does not');
 
-console.log(`PASS — data pipeline + inlined boards + hover bars + cross-board writes + add + corner-drag + shell/toolbar + attention channels verified`);
+console.log(`PASS — data pipeline + inlined boards + hover bars + cross-board writes + add + corner-drag + shell/toolbar + attention channels (todo/in_progress/waiting/blocked) verified`);

@@ -42,6 +42,11 @@ try {
     ok(bl.some(b => b.slug === 'tutorial' && b.items > 0), 'tutorial board seeded separately with content');
   }
 
+  // status vocabulary includes the new `waiting` level; garbage is rejected
+  ok((await api('POST', '/api/status', { board: 'tilemon', path: 'demo', status: 'waiting', note: 'need a decision' })).status === 200, 'waiting is a valid status');
+  ok((await api('POST', '/api/status', { board: 'tilemon', path: 'demo', status: 'nonsense' })).status === 400, 'invalid status rejected');
+  await api('DELETE', '/api/node', { board: 'tilemon', path: 'demo' });   // tidy up so it doesn't affect later checks
+
   // --- POST /api/board: create bare boards, placed nowhere ---
   const mk = await api('POST', '/api/board', { name: 'Word Duel' });
   ok(mk.status === 200 && mk.json.slug === 'word-duel', 'create board derives slug from name');
