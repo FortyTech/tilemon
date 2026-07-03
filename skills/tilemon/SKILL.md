@@ -112,12 +112,11 @@ The loop:
    the human is *editing*, not authoring. In priority order: an explicit tag (a manifest `group:`
    field), then directory structure (nested folders → nested groups), then a categorised doc
    (e.g. a project index in a `CLAUDE.md`). Survey the *workspace's own* signals — never TileMon's
-   source. For a first-cut at **weight**, lean on activity/recency — but say you've done so; it's
-   a guess for them to correct.
+   source. **Do NOT guess weights** — importance is the human's (see below).
 2. **Propose a concrete strawman in prose, and invite free-text corrections** ("move X, split Y,
-   drop Z") — a board per project grouped into a few named, weighted buckets. Reacting to a
-   written draft is lower-friction than multiple-choice prompts, so prefer it; reserve a formal
-   question for a *genuine* either/or blocker, not for things you can just propose a default for.
+   drop Z") — a board per project grouped into a few named buckets. Propose the **grouping**, not
+   the sizes. Reacting to a written draft is lower-friction than multiple-choice prompts, so prefer
+   it; reserve a formal question for a *genuine* either/or blocker, not for things you can default.
 
 **Keep the surface coarse — this is the cardinal rule.** Bootstrap builds *structure* (buckets +
 project boards), **not a task list**. Do NOT seed granular tasks/tickets — that makes the board
@@ -127,10 +126,16 @@ busy, the fix is to *subtract*, not add.
 3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
    by writing files. The server live-reloads, so the human watches the board fill in as you go.
 
+**Weight/importance is the human's — do NOT set it.** Build everything at the default (equal)
+weight and leave allocation to the human, who spends the importance budget by dragging tiles.
+That's the whole premise: importance is theirs to assign, not yours to guess. The *only* time you
+set a weight is when the human **explicitly tells you** one ("make Products the biggest") — then
+you're just their hands (`POST /api/weight`); otherwise never touch it.
+
 **Build it with the structure API — never hand-author the JSON.** Structure is human-owned and
 can't be created via `POST /api/status`; use the admin routes instead. The order is: create the
-project boards, make the buckets on the home board, then include the boards into their buckets,
-then set weights.
+project boards, make the buckets on the home board, then include the boards into their buckets.
+New nodes are born at weight 1 (equal), which is exactly the neutral starting point you want.
 
 ```bash
 U=${TILEMON_URL:-http://localhost:4000}
@@ -139,11 +144,10 @@ curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp"}'            #
 curl -s -X POST $U/api/board -d '{"name":"API","slug":"api"}'
 # 2. buckets on the home board (a bucket is just an item you add into); "tilemon" is the seeded home board
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","kind":"item","name":"Products"}'   # -> node id "products"
-# 3. include the EXISTING project boards into the bucket
+# 3. include the EXISTING project boards into the bucket (born at weight 1 — DON'T set weights)
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"webapp"}'
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"api"}'
-# 4. weight the bucket (importance = size); reorganise later with /api/move
-curl -s -X POST $U/api/weight -d '{"board":"tilemon","path":"products","weight":3}'
+# then: leave weights equal. The human drags to allocate importance. Reorganise later with /api/move.
 ```
 
 Node ids are derived from the name/slug (e.g. bucket "Products" → `products`, an include of
