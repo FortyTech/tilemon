@@ -35,8 +35,12 @@ try {
     try { await fetch(BASE + '/api/boards'); break; } catch { await new Promise(r => setTimeout(r, 100)); }
   }
 
-  // fresh dir auto-seeds the 'tilemon' home board
-  ok((await api('GET', '/api/boards')).json.some(b => b.slug === 'tilemon'), 'home board auto-seeded');
+  // fresh dir auto-seeds an EMPTY home board + a SEPARATE, populated tutorial board (never mixed)
+  {
+    const bl = (await api('GET', '/api/boards')).json;
+    ok(bl.some(b => b.slug === 'tilemon' && b.items === 0), 'home board seeded empty');
+    ok(bl.some(b => b.slug === 'tutorial' && b.items > 0), 'tutorial board seeded separately with content');
+  }
 
   // --- POST /api/board: create bare boards, placed nowhere ---
   const mk = await api('POST', '/api/board', { name: 'Word Duel' });

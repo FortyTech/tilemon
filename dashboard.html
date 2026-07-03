@@ -82,8 +82,18 @@ async function load(s) {
   }
 }
 
-// starting board: URL slug, else the home shell / first native board, else empty-state prompt.
-const pick = bs => (bs.find(b => b.slug === 'tilemon') || bs.find(b => b.toolbar !== false && b.source === 'native') || bs.find(b => b.source === 'native') || bs[0] || {}).slug;
+// starting board: URL slug wins; else a POPULATED real board (your own, once it has content);
+// else the tutorial board; else an empty real board; else whatever exists. The tutorial never
+// hijacks a board you've populated, and never vanishes — it's always in the switcher.
+const pick = bs => {
+  const real = b => b.slug !== 'tutorial';
+  const b = bs.find(b => real(b) && b.toolbar !== false && b.source === 'native' && b.items > 0)
+         || bs.find(b => real(b) && b.source === 'native' && b.items > 0)
+         || bs.find(b => b.slug === 'tutorial')
+         || bs.find(b => real(b) && b.source === 'native')
+         || bs.find(real) || bs[0] || {};
+  return b.slug;
+};
 const boards = await listBoards();
 const start = slugFromUrl() || pick(boards);
 if (start) load(start);

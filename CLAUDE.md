@@ -1,7 +1,11 @@
 # CLAUDE.md — TileMon
 
-A zero-sum treemap priority board. Importance = on-screen area; agents flag status, you
-own the weights. Distributed as an `npx` tool over a local JSON file.
+**An attention-management tool, not a project manager.** The one question it answers is *what
+are my agents waiting on me for?* A zero-sum treemap: importance = on-screen area; agents flag
+status, you own the weights. Only `blocked` glows (needs you); `in_progress` is a calm "working"
+dot (no heat); the surface stays coarse — detail is drill-down. **The test for any feature: does
+it direct attention, or dilute it?** Adding granular detail (e.g. seeding every task) is the
+failure mode — when it feels busy, subtract. Distributed as an `npx` tool over local JSON boards.
 
 **Read [`SPEC.md`](./SPEC.md) first** — it is the ratified design (locked model,
 architecture, roadmap, open decisions). This file is the working-state layer on top.

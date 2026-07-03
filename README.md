@@ -1,8 +1,11 @@
 # TileMon
 
-A priority board where **importance is space**. The canvas is fixed, so making one
-thing bigger shrinks everything else — a zero-sum map that won't let you pretend ten
-things are all urgent. Hand tasks to your agents; when one gets stuck, it glows.
+**An attention-management tool, not a project manager.** The one question it answers is
+*what are my agents waiting on me for?* Importance is **space** on a fixed canvas, so making
+one thing bigger shrinks everything else — a zero-sum map that won't let you pretend ten things
+are all urgent. Hand work to your agents; when one gets **stuck, it glows** and pulls you in.
+Everything that's fine stays quiet. If a feature would add noise instead of directing attention,
+it doesn't belong here.
 
 ```
 npx tilemon           # serves ~/.tilemon — one board for the whole machine (created on first run)
@@ -49,9 +52,11 @@ npm run demo        # serves ./examples/boards (a native board + a mounted one +
 - **Any item can carry a status, at any depth.** It's a uniformly recursive tree — an
   item may contain items *and* hold its own status. A whole group can be `blocked` (the
   branch is stuck) without lying about a child.
-- **Status renders as heat.** `blocked` glows; `done` drops off the board. An item's own
-  status sets a heat *floor*, and heat also rolls up area-weighted from its contents — so
-  a stuck thing deep in a group makes the whole group glow, visible from across the room.
+- **Heat = "needs you". Only `blocked` glows.** `done` drops off the board. `in_progress`
+  carries **no heat** — an agent that's working doesn't want your attention; it gets a **calm
+  "working" dot** instead (a separate, quiet channel, so you can see activity without being
+  pulled by it). Heat rolls up area-weighted, so a stuck thing deep in a group makes the whole
+  group glow, visible from across the room — while the surface stays coarse and calm otherwise.
 - **`done` is reversible.** Finished items drop off so the board shows live work, but the
   **done** toggle brings them back (dimmed) so you can re-open one — hiding never means
   losing.

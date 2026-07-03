@@ -5,10 +5,12 @@ description: Report task/agent status to a TileMon priority board (todo/in_progr
 
 # TileMon — report status to the board
 
-TileMon is a zero-sum treemap priority board: importance is on-screen area, the human owns the
-weights, and **agents set status**. Blocked work glows. Your entire integration is **one HTTP
-POST**, and it **upserts** (creates the board and any missing nodes on first write), so you can
-register your own work as you go.
+TileMon is an **attention-management tool, not a project tracker**: a zero-sum treemap that answers
+one question for the human — *what are my agents waiting on me for?* Importance is on-screen area,
+the human owns the weights, and **agents set status**. Only `blocked` glows (it needs the human);
+`in_progress` is a calm signal (an agent's working, no attention needed). Your entire integration
+is **one HTTP POST**, and it **upserts** (creates the board and any missing nodes on first write),
+so you can register your own work as you go — but keep it coarse (see below); noise defeats the tool.
 
 **It is a shared, long-running board — not this session's state.** The board runs as its own
 server (often started detached with `--daemon`, so it outlives any single session) and is written
@@ -98,6 +100,12 @@ The loop:
    drop Z") — a board per project grouped into a few named, weighted buckets. Reacting to a
    written draft is lower-friction than multiple-choice prompts, so prefer it; reserve a formal
    question for a *genuine* either/or blocker, not for things you can just propose a default for.
+
+**Keep the surface coarse — this is the cardinal rule.** Bootstrap builds *structure* (buckets +
+project boards), **not a task list**. Do NOT seed granular tasks/tickets — that makes the board
+busy and *costs* the human attention, which is the one thing the tool exists to protect. Detail
+belongs in drill-down and arrives naturally as agents flag their live work. If the board ever feels
+busy, the fix is to *subtract*, not add.
 3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
    by writing files. The server live-reloads, so the human watches the board fill in as you go.
 
