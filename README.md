@@ -107,6 +107,12 @@ TileMon prescribes no mechanism and ships no rule-specific tooling: **sending up
 live, a hook, CI, a scheduled job — is up to you. Scope with `# board: <slug>` / `# node: <board>.<path>`
 sections; the rest is global.
 
+**Optional — a Claude Code `Stop` hook.** So the board stays current without you (or an agent)
+remembering, setup can add a project `Stop` hook that, when the agent pauses for input, nudges it once
+to apply `attention.md` and push updates before it stops. It's offered opt-out at setup, scoped to the
+project's `.claude/settings.json`, and removable by deleting the `Stop` entry. Claude-Code-specific;
+everything else just pushes via `POST /api/status`.
+
 ## Boards & file format
 
 A **board** is `<slug>.json` in the boards directory. A board has a `source` (where its data
