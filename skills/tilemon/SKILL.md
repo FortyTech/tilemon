@@ -119,6 +119,12 @@ human's to decide — but don't make them author it cold. Run a **propose-first 
 draft, they react. Reacting to a wrong draft is far easier than answering "how do you want to
 group these?" from nothing.
 
+**Run setup as a WIZARD with two mandatory gates.** At each gate you present, then **STOP — end your
+turn and wait for the human's reply.** Do not blow through a gate: don't build structure before Gate 1
+is answered, and don't consider setup finished before Gate 2 is answered. These aren't "invite
+corrections and keep going" — they are hard pauses. (Conversational prose is fine; you don't need the
+multiple-choice widget.) The gates: **(1) the buckets, (2) what should get their attention.**
+
 The loop:
 
 0. **Ensure the board is running** (see step 1 of "Reporting status" — `npx tilemon --daemon` if
@@ -129,18 +135,17 @@ The loop:
    field), then directory structure (nested folders → nested groups), then a categorised doc
    (e.g. a project index in a `CLAUDE.md`). Survey the *workspace's own* signals — never TileMon's
    source. **Do NOT guess weights** — importance is the human's (see below).
-2. **Propose a concrete strawman in prose, and invite free-text corrections** ("move X, split Y,
-   drop Z") — a board per project grouped into a few named buckets. Propose the **grouping**, not
-   the sizes. Reacting to a written draft is lower-friction than multiple-choice prompts, so prefer
-   it; reserve a formal question for a *genuine* either/or blocker, not for things you can default.
+2. **GATE 1 — buckets.** Propose a concrete grouping in prose (a board per project, grouped into a
+   few named buckets — grouping, not sizes), then **STOP and wait.** Build **nothing** until the
+   human has confirmed or corrected it. This is a real pause, not a rhetorical "let me know."
 
 **Keep the surface coarse — this is the cardinal rule.** Bootstrap builds *structure* (buckets +
 project boards), **not a task list**. Do NOT seed granular tasks/tickets — that makes the board
 busy and *costs* the human attention, which is the one thing the tool exists to protect. Detail
 belongs in drill-down and arrives naturally as agents flag their live work. If the board ever feels
 busy, the fix is to *subtract*, not add.
-3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
-   by writing files. The server live-reloads, so the human watches the board fill in as you go.
+3. **Only after Gate 1 is answered, build it** through the server's API (below), not by writing
+   files. The server live-reloads, so the human watches the board fill in as you go.
 
 **Weight/importance is the human's — do NOT set it.** Build everything at the default (equal)
 weight and leave allocation to the human, who spends the importance budget by dragging tiles.
@@ -179,12 +184,14 @@ reacting-to-a-draft beats dragging tiles. Ongoing maintenance is different: rewe
 in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST /api/status`
 (above); only the initial structure is built here — and only ever through the API.
 
-### Setup step — always ask what should grab their attention (write attention.md)
+### GATE 2 — ask what should get their attention (write attention.md)
 
-The board only earns its keep once it knows what deserves *their* attention, so **always ask** — never
-leave `attention.md` blank and never assume they'll write it later. After the structure's built, ask
-the human what they want surfaced, offering a few concrete examples to react to (they pick, edit, or
-add their own). Same rule as weights: you **elicit and record, you never impose or guess**.
+The board only earns its keep once it knows what deserves *their* attention, so this is a **mandatory
+gate**, not an optional afterthought: after the structure's built, **STOP and directly ask** the human
+what they want surfaced, offering a few concrete examples to react to — then **wait for their answer**
+before you finish. **Setup is NOT complete until you've asked and recorded a reply** (even if the reply
+is "none for now"). Never leave `attention.md` blank because you skipped the question. Same rule as
+weights: you **elicit and record, you never impose or guess**.
 
 The headline is intrinsic and doesn't need a rule: **an agent that needs the human already flags it**
 — `waiting` for a decision/input, `blocked` when something's wrong. Name that so they know it's
