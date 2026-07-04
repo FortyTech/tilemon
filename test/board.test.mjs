@@ -186,10 +186,6 @@ const noteBoard = { name: 'N', _board: 'n', _path: '', children: [
 ] };
 board.update(noteBoard); raf.forEach(fn => fn());
 assert.ok(tile('q').title === 'Q — which provider — Clerk or Auth0?', 'every tile carries a native title tooltip (name + note) — identifiable even when too small to label');
-hover('q');
-const noteDiv = boardEl.children.find(c => c.className === 'tlm-note');
-assert.ok(noteDiv && noteDiv.textContent === 'which provider — Clerk or Auth0?', 'hovering a tile with a note surfaces it');
-hover(null);
-assert.ok(!boardEl.children.find(c => c.className === 'tlm-note'), 'note clears when the tile is no longer hovered');
+assert.ok(tile('q').innerHTML.includes('class="nt"') && tile('q').innerHTML.includes('Clerk or Auth0'), 'the note renders inline under the name (always visible, no floating caption)');
 
 console.log(`PASS — data pipeline + inlined boards + hover bars + notes + cross-board writes + add + corner-drag + shell/toolbar + attention channels (todo/in_progress/waiting/blocked) verified`);

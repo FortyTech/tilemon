@@ -64,10 +64,9 @@ const STYLE = `
 .tlm-bar button.del:hover{border-color:#b0563a;color:#d8674a}
 .tlm-ghost{position:absolute;z-index:800;border:2px solid var(--tlm-gold,#E8C56A);background:rgba(232,197,106,.14);border-radius:5px;
   pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.3)}
-/* the agent's note (the "why" behind a status) — shown on hover, pinned to the tile's bottom */
-.tlm-board .tlm-note{position:absolute;z-index:690;background:rgba(20,18,13,.95);color:var(--tlm-ink,#ECE7DA);
-  font-size:10.5px;line-height:1.35;padding:4px 7px;border:1px solid var(--tlm-line,#2A2820);border-radius:5px;
-  max-height:3.4em;overflow:hidden;pointer-events:none;box-shadow:0 2px 7px rgba(0,0,0,.4)}
+/* inline note under a leaf's name — the "why", always visible (truncated to 2 lines); full text in the title tooltip */
+.tlm-board .nt{font-size:10px;line-height:1.25;opacity:.72;max-width:100%;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal}
 .tlm-board .tlm-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-family:"Space Mono",monospace;font-size:12.5px;color:var(--tlm-dim,#9A9182);text-align:center;padding:24px;pointer-events:none}
 .tlm-board .tlm-toolbar{position:absolute;top:0;left:0;right:0;height:36px;z-index:820;display:flex;align-items:center;gap:8px;padding:0 10px;
@@ -104,9 +103,12 @@ export function mount(boardEl, controlsEl, opts = {}) {
   boardEl.classList.add('tlm-board');
 
   let srcState = opts.state || { name: 'Priorities', _board: null, _path: '', children: [] };
-  let root, viewRoot, viewRootId = null, showWeights = false, showDone = opts.showDone !== false;   // done shown by default
-  let tileEls = {}, drag = null, freeze = false, emptyEl = null, ghostEl = null, popEl = null, noteEl = null;
-  let toolbarEl = null, statusEl = null, upEl = null, hoverId = null, modDown = false;
+  let root, viewRoot, viewRootKey = null, showWeights = false, showDone = opts.showDone !== false;   // done shown by default
+  let tileEls = {}, drag = null, freeze = false, emptyEl = null, ghostEl = null;
+  let toolbarEl = null, statusEl = null, upEl = null, hoverKey = null, modDown = false;
+  // A node's GLOBALLY-unique key = owning board + local path (node ids are only unique within a
+  // board, so inlined includes can share ids like "vcs" — keying by id alone collides).
+  const nkey = n => (n._board || '') + '::' + (n._path || '');
   const isShell = () => viewRoot.toolbar !== false;
 
   const num = (v, d) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : d; };
@@ -134,8 +136,8 @@ export function mount(boardEl, controlsEl, opts = {}) {
   }
   function rebuild() {
     root = buildWorking(srcState);
-    viewRoot = (viewRootId && find(root, viewRootId)) || root;
-    viewRootId = viewRoot === root ? null : viewRoot.id;
+    viewRoot = (viewRootKey && findByKey(root, viewRootKey)) || root;
+    viewRootKey = viewRoot === root ? null : nkey(viewRoot);
   }
 
   // ---- squarified treemap (Bruls/Huizing/van Wijk) ----
@@ -163,7 +165,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     const total = ch.reduce((s, c) => s + Math.max(c.weight, 1e-6), 0), area = iw * ih;
     const items = ch.map(c => ({ node: c, area: area * (Math.max(c.weight, 1e-6) / total) }));
     if (freeze) items.sort((a, b) => (a.node._ord == null ? 0 : a.node._ord) - (b.node._ord == null ? 0 : b.node._ord));
-    else items.sort((a, b) => b.area - a.area || String(a.node.id).localeCompare(String(b.node.id)));
+    else items.sort((a, b) => b.area - a.area || nkey(a.node).localeCompare(nkey(b.node)));
     items.forEach((it, i) => { it.node._ord = i; });
     const out = []; squarify(items, ix, iy, iw, ih, out);
     for (const o of out) { o.node._parent = node; layout(o.node, o.x, o.y, o.w, o.h, depth + 1, false); }
@@ -191,7 +193,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     return 'rgb(216,67,46)'; }
   const textColor = h => h > 0.6 ? '#2A1206' : 'var(--tlm-ink,#ECE7DA)';
   const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-  function find(n, id) { if (n.id === id) return n; for (const c of (n.children || [])) { const f = find(c, id); if (f) return f; } return null; }
+  function findByKey(n, k) { if (nkey(n) === k) return n; for (const c of (n.children || [])) { const f = findByKey(c, k); if (f) return f; } return null; }
   function pathNodes(n) { const p = []; let c = n; while (c) { p.unshift(c); c = c._parent; } return p; }
   // the outermost ancestor of `node` that sits directly inside the current view (the "big" thing)
   function outermostUnderView(node) { let a = node; while (a && a._parent && a._parent !== viewRoot) a = a._parent; return (a && a._parent === viewRoot) ? a : node; }
@@ -207,23 +209,23 @@ export function mount(boardEl, controlsEl, opts = {}) {
     (function walk(n) { (n.children || []).forEach(c => { vis.push(c); walk(c); }); })(viewRoot);
     const seen = new Set();
     for (const node of vis) {
-      const r = node._rect;
-      if (r.w < 3 || r.h < 3) { if (tileEls[node.id]) { tileEls[node.id].remove(); delete tileEls[node.id]; } continue; }
-      seen.add(node.id);
+      const r = node._rect, k = nkey(node);
+      if (r.w < 3 || r.h < 3) { if (tileEls[k]) { tileEls[k].remove(); delete tileEls[k]; } continue; }
+      seen.add(k);
       const isBoard = node._boardLink !== undefined, isParent = node.children && node.children.length;
-      let el = tileEls[node.id];
-      if (!el) { el = doc.createElement('div'); el.className = 'tile'; el.style.opacity = '0'; el.dataset.id = node.id;
+      let el = tileEls[k];
+      if (!el) { el = doc.createElement('div'); el.className = 'tile'; el.style.opacity = '0'; el.dataset.id = node.id; el.dataset.key = k;
         el.addEventListener('pointerdown', onDown);
         el.addEventListener('dblclick', e => {   // drill the OUTERMOST container under the view, wherever you clicked
           e.stopPropagation();
-          const n = find(root, el.dataset.id); if (!n) return;
+          const n = findByKey(root, el.dataset.key); if (!n) return;
           const t = outermostUnderView(n);
           // drillable: a non-empty group, OR any board (even empty — so you can go in and populate it),
           // but not a missing/cyclic board.
           const drillable = t !== viewRoot && ((t.children && t.children.length) || (t._boardLink !== undefined && !t._missing && !t._cycle));
-          if (drillable) { viewRoot = t; viewRootId = t.id; render(); }
+          if (drillable) { viewRoot = t; viewRootKey = nkey(t); render(); }
         });
-        tileEls[node.id] = el; boardEl.appendChild(el); requestAnimationFrame(() => { if (tileEls[node.id]) el.style.opacity = '1'; }); }
+        tileEls[k] = el; boardEl.appendChild(el); requestAnimationFrame(() => { if (tileEls[k]) el.style.opacity = '1'; }); }
       el.style.left = (r.x + INSET) + 'px'; el.style.top = (r.y + INSET) + 'px';
       el.style.width = Math.max(0, r.w - 2 * INSET) + 'px'; el.style.height = Math.max(0, r.h - 2 * INSET) + 'px';
       el.style.zIndex = r.depth;
@@ -240,7 +242,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
       let html = '';
       if (isParent) { if (r.w > 44 && r.h > 24) html = `<div class="hd"><span class="nm">${esc(node.name)}${isBoard ? ' <span class="bl" title="board">↗</span>' : ''}</span>${wt}</div>`; }
       else if (isBoard) { if (r.w > 34 && r.h > 20) { const b = node._missing ? 'missing ⚠' : node._cycle ? 'cycle ⟳' : 'empty board'; html = `<div class="leaf"><span class="nm">${esc(node.name)}</span><span class="badge">${b}</span></div>`; } }
-      else { if (r.w > 34 && r.h > 20) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${wt}</div>`; }
+      else { if (r.w > 34 && r.h > 20) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${node.note ? `<span class="nt">${esc(node.note)}</span>` : ''}${wt}</div>`; }
       if (el._html !== html) { el.innerHTML = html; el._html = html; el._bar = null; }   // wipes any bar; hover re-adds
     }
     for (const id in tileEls) { if (!seen.has(id)) { tileEls[id].remove(); delete tileEls[id]; } }
@@ -283,64 +285,32 @@ export function mount(boardEl, controlsEl, opts = {}) {
   }
   function applyHover() {
     const chain = new Set();
-    let n = hoverId ? find(root, hoverId) : null;
-    while (n) { if (tileEls[n.id]) chain.add(n.id); n = n._parent; }
-    for (const id in tileEls) {
-      const el = tileEls[id], node = find(root, id);
-      const active = chain.has(id) && node._rect && node._rect.w >= BAR_MIN_W && node._rect.h >= BAR_MIN_H;
+    let n = hoverKey ? findByKey(root, hoverKey) : null;
+    while (n) { const k = nkey(n); if (tileEls[k]) chain.add(k); n = n._parent; }
+    for (const k in tileEls) {
+      const el = tileEls[k], node = findByKey(root, k);
+      // inline action bar on the hovered tile + its ancestors, when big enough. Tiny tiles get no bar
+      // (no floating popover) — the native title tooltip identifies them, and the note shows inline;
+      // to act on one, drill in (which enlarges it) or resize it until the bar fits.
+      const active = chain.has(k) && node && node._rect && node._rect.w >= BAR_MIN_W && node._rect.h >= BAR_MIN_H;
       if (active) { if (!el._bar) attachBar(el, node); } else if (el._bar) { el._bar.remove(); el._bar = null; }
     }
-    // tiny innermost tile: fall back to a popover so its controls are still reachable
-    const inner = hoverId ? find(root, hoverId) : null;
-    if (inner && inner._rect && (inner._rect.w < BAR_MIN_W || inner._rect.h < BAR_MIN_H)) { showPop(inner); hideNote(); }
-    else { hidePop(); showNote(inner); }   // note (the "why") for the hovered tile
     updateTarget();
-  }
-  // the agent's note for the hovered tile — a caption pinned to the tile's bottom
-  function hideNote() { if (noteEl) { noteEl.remove(); noteEl = null; } }
-  function showNote(node) {
-    hideNote();
-    if (!node || !node.note || !node._rect) return;
-    const r = node._rect;
-    if (r.w < 70 || r.h < 40) return;   // too small — the popover carries the note instead
-    noteEl = doc.createElement('div'); noteEl.className = 'tlm-note'; noteEl.textContent = node.note;
-    noteEl.style.width = Math.max(60, Math.min(r.w - 8, 320)) + 'px';
-    noteEl.style.left = (r.x + 4) + 'px';
-    noteEl.style.bottom = Math.max(4, boardEl.clientHeight - (r.y + r.h) + 5) + 'px';
-    boardEl.appendChild(noteEl);
   }
   // highlight the tile a drag would resize right now — outermost by default, innermost while a
   // modifier is held — so it's obvious what you're about to grab (and it flips with the key).
   function updateTarget() {
-    let tid = null;
-    if (hoverId && !drag) { const n = find(root, hoverId); if (n) { const t = modDown ? n : outermostUnderView(n); if (t && t._parent && !t._ro) tid = t.id; } }
-    for (const id in tileEls) tileEls[id].classList.toggle('target', id === tid);
+    let tk = null;
+    if (hoverKey && !drag) { const n = findByKey(root, hoverKey); if (n) { const t = modDown ? n : outermostUnderView(n); if (t && t._parent && !t._ro) tk = nkey(t); } }
+    for (const k in tileEls) tileEls[k].classList.toggle('target', k === tk);
   }
   function onKey(e) { const m = !!(e.ctrlKey || e.metaKey || e.altKey); if (m !== modDown) { modDown = m; updateTarget(); } }
   function onHover(e) {
     if (drag) return;
     const t = e.target && e.target.closest ? e.target.closest('.tile') : null;
-    const id = t ? t.dataset.id : null;
-    if (id === hoverId) return;
-    hoverId = id; applyHover();
-  }
-
-  // ---- tiny-tile popover fallback ----
-  function hidePop() { if (popEl) { popEl.remove(); popEl = null; } }
-  function showPop(node) {
-    hidePop();
-    popEl = doc.createElement('div'); popEl.className = 'tlm-bar'; popEl.style.position = 'absolute'; popEl.style.zIndex = '900';
-    popEl.style.right = 'auto'; popEl.style.flexWrap = 'wrap'; popEl.style.maxWidth = '240px'; popEl.style.borderRadius = '7px';
-    popEl.style.background = 'var(--tlm-panel,#1C1A14)'; popEl.style.border = '1px solid var(--tlm-line,#2A2820)'; popEl.style.padding = '4px';
-    popEl.innerHTML = buildBarHTML(node);
-    if (node.note) { const nd = doc.createElement('div'); nd.style.cssText = 'flex-basis:100%;width:100%;font-size:10px;line-height:1.3;opacity:.85;white-space:normal;padding:2px 2px 0'; nd.textContent = node.note; popEl.appendChild(nd); }
-    popEl.addEventListener('pointerdown', e => e.stopPropagation());
-    popEl.addEventListener('click', e => { const b = e.target.closest && e.target.closest('button'); if (b) barAction(node, b.dataset.a, b.dataset.s); });
-    popEl.addEventListener('change', e => { const t = e.target; if (t && t.dataset && t.dataset.a === 'st') barAction(node, 'st', t.value); });
-    boardEl.appendChild(popEl);
-    const r = node._rect, pw = popEl.offsetWidth || 200, ph = popEl.offsetHeight || 40;
-    popEl.style.left = Math.max(6, Math.min(r.x, boardEl.clientWidth - pw - 6)) + 'px';
-    popEl.style.top = Math.max(6, Math.min(r.y, boardEl.clientHeight - ph - 6)) + 'px';
+    const k = t ? t.dataset.key : null;
+    if (k === hoverKey) return;
+    hoverKey = k; applyHover();
   }
 
   // ---- writes ----
@@ -356,7 +326,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function onDown(e) {
     e.stopPropagation();
     if (e.target && e.target.closest && e.target.closest('.tlm-bar')) return;   // clicks on the action bar aren't drags
-    const tapped = find(root, e.currentTarget.dataset.id); if (!tapped) return;
+    const tapped = findByKey(root, e.currentTarget.dataset.key); if (!tapped) return;
     // plain drag resizes the OUTERMOST container under the view (the big thing you can barely grab
     // otherwise); holding a modifier resizes the exact tile you touched (the innermost).
     const inner = e.ctrlKey || e.metaKey || e.altKey;
@@ -401,7 +371,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     drag = null; render();
   }
 
-  function goUp() { const p = viewRoot._parent || root; viewRoot = p; viewRootId = p === root ? null : p.id; render(); }
+  function goUp() { const p = viewRoot._parent || root; viewRoot = p; viewRootKey = p === root ? null : nkey(p); render(); }
   const rm = el => { if (el) el.remove(); };
 
   // ---- shell chrome: toolbar (up · name · add · switcher · weights · done) + status footer ----
@@ -417,13 +387,13 @@ export function mount(boardEl, controlsEl, opts = {}) {
     const cur = root._board;
     const sw = boards && boards.length ? `<select id="tbBoards">` + boards.map(b => `<option value="${esc(b.slug)}"${b.slug === cur ? ' selected' : ''}>${esc(b.name)}${b.visibility === 'public' ? ' (public)' : ''}</option>`).join('') + `</select>` : '';
     const bc = pathNodes(viewRoot);   // breadcrumb: click any ancestor to climb back out
-    const crumb = `<span class="tb-name">` + bc.map((n, i) => i === bc.length - 1 ? `<b>${esc(n.name)}</b>` : `<span class="cr" data-id="${esc(n.id)}">${esc(n.name)}</span> ／ `).join('') + `</span>`;
+    const crumb = `<span class="tb-name">` + bc.map((n, i) => i === bc.length - 1 ? `<b>${esc(n.name)}</b>` : `<span class="cr" data-key="${esc(nkey(n))}">${esc(n.name)}</span> ／ `).join('') + `</span>`;
     toolbarEl.innerHTML = crumb
       + `<button id="tbAdd" title="add item">＋</button><button id="tbAddb" title="add board">⧉</button><span class="tb-spacer"></span>`
       + sw + `<button id="tbWt">weights: ${showWeights ? 'on' : 'off'}</button><button id="tbDone">done: ${showDone ? 'shown' : 'hidden'}</button>`
       + `<button id="tbShell" title="hide the shell chrome for this board">shell</button>`;
     const q = s => toolbarEl.querySelector(s);
-    toolbarEl.querySelectorAll('.cr').forEach(s => s.onclick = () => { const t = find(root, s.dataset.id); if (t) { viewRoot = t; viewRootId = t === root ? null : t.id; render(); } });
+    toolbarEl.querySelectorAll('.cr').forEach(s => s.onclick = () => { const t = findByKey(root, s.dataset.key); if (t) { viewRoot = t; viewRootKey = t === root ? null : nkey(t); render(); } });
     q('#tbShell').onclick = () => onSetToolbar(viewRoot._board, viewRoot._path, false);   // turn this board bare
     if (q('#tbBoards')) q('#tbBoards').onchange = () => onOpenBoard(q('#tbBoards').value);
     q('#tbAdd').onclick = () => { const n = win.prompt('New item'); if (n && n.trim()) { const t = containerTarget(viewRoot); onAddNode(t.board, t.path, 'item', n.trim()); } };
@@ -438,7 +408,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
 
   const ro = new ResizeObserver(() => { renderBoard(); applyHover(); }); ro.observe(boardEl);
   boardEl.addEventListener('pointermove', onHover);
-  boardEl.addEventListener('pointerleave', () => { hoverId = null; applyHover(); });
+  boardEl.addEventListener('pointerleave', () => { hoverKey = null; applyHover(); });
   win.addEventListener('keydown', onKey); win.addEventListener('keyup', onKey);   // modifier flips the resize target
 
   rebuild(); render();
@@ -448,6 +418,6 @@ export function mount(boardEl, controlsEl, opts = {}) {
     setBoards(list) { boards = list || []; renderChrome(); },
     setShowDone(v) { showDone = !!v; rebuild(); render(); },
     getState() { return srcState; },
-    destroy() { ro.disconnect(); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); hidePop(); hideNote(); rm(toolbarEl); rm(statusEl); rm(upEl); for (const id in tileEls) tileEls[id].remove(); tileEls = {}; },
+    destroy() { ro.disconnect(); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); rm(toolbarEl); rm(statusEl); rm(upEl); for (const k in tileEls) tileEls[k].remove(); tileEls = {}; },
   };
 }

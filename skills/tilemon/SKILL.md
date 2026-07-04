@@ -40,11 +40,14 @@ scheduled ones — often at the same time. You are just one of those clients. So
    stable, dotted id for your task within that board, e.g. `api.refactor-auth`. **Reuse the same
    board + path across a task's whole life** so a reconnecting agent lands back on the same tile.
 3. **POST it.** `status` ∈ `todo | in_progress | waiting | blocked | done`. Include a `note` — your
-   message (what you're doing / what you need); it shows in the tile's hover actions.
+   message (what you're doing / what you need); it shows inline on the tile (and in its tooltip). Also
+   pass a **`name`** in **plain language a human reads at a glance** — "Uncommitted changes", "Deploy
+   to prod" — **never a cryptic code or abbreviation** ("vcs", "wip"); the human is looking at this,
+   not you.
    ```bash
    curl -s -X POST "$TILEMON_URL/api/status" \
      -H 'content-type: application/json' \
-     -d '{"board":"webapp","path":"api.refactor-auth","status":"waiting","note":"which auth provider do you want — Clerk or Auth0?"}'
+     -d '{"board":"webapp","path":"api.refactor-auth","status":"waiting","name":"Refactor auth","note":"which auth provider do you want — Clerk or Auth0?"}'
    ```
    Add `-H "Authorization: Bearer $TILEMON_TOKEN"` if the server requires a token.
    From inside the tilemon repo: `node examples/flag.mjs <board> <dotted.id.path> <status> "<note>"`.
