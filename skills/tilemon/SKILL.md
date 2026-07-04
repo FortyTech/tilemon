@@ -135,9 +135,18 @@ The loop:
    field), then directory structure (nested folders → nested groups), then a categorised doc
    (e.g. a project index in a `CLAUDE.md`). Survey the *workspace's own* signals — never TileMon's
    source. **Do NOT guess weights** — importance is the human's (see below).
-2. **GATE 1 — buckets.** Propose a concrete grouping in prose (a board per project, grouped into a
-   few named buckets — grouping, not sizes), then **STOP and wait.** Build **nothing** until the
-   human has confirmed or corrected it. This is a real pause, not a rhetorical "let me know."
+2. **GATE 1 — buckets.** Present your proposed grouping as a **table, one bucket per row** (rows, not
+   columns — there can be many buckets, and a column each would squash them):
+
+   | Bucket | Projects |
+   |---|---|
+   | Products | webapp, api, mobile |
+   | Clients  | acme, globex |
+   | Internal | docs, scripts |
+
+   Propose the **grouping only** (which projects sit in which bucket) — not sizes/weights. Then
+   **STOP and wait.** Build **nothing** until the human has confirmed or corrected the table. This is
+   a real pause, not a rhetorical "let me know."
 
 **Keep the surface coarse — this is the cardinal rule.** Bootstrap builds *structure* (buckets +
 project boards), **not a task list**. Do NOT seed granular tasks/tickets — that makes the board
@@ -193,20 +202,27 @@ before you finish. **Setup is NOT complete until you've asked and recorded a rep
 is "none for now"). Never leave `attention.md` blank because you skipped the question. Same rule as
 weights: you **elicit and record, you never impose or guess**.
 
-The headline is intrinsic and doesn't need a rule: **an agent that needs the human already flags it**
-— `waiting` for a decision/input, `blocked` when something's wrong. Name that so they know it's
-automatic; then ask what *ambient* things to add on top:
-- uncommitted or committed-but-unpushed work in a repo → usually `waiting`
-- failing tests / a red CI run → usually `blocked`
-- an open PR awaiting their review (or theirs blocked on changes) → `waiting`
-- any obvious security issue (e.g. a vulnerable dependency) → `blocked`
-- an urgent item from a connected tool (email / Slack / tickets) → `waiting`
+First, name the part that's automatic and needs no rule: **an agent that needs the human already flags
+it** — `waiting` for a decision/input, `blocked` when something's wrong. Then present this **curated
+list as a menu to pick from** (they choose which apply, edit wording, or add their own) — these are the
+candidate lines that go into `~/.tilemon/attention.md`:
 
-A rule is only useful if an agent can actually *check* it — that's bounded by the tools/integrations
-in the agent's context (git is always there; PRs/CI need `gh`/CI access; email needs an MCP). So treat
-the list as illustrative, not guaranteed. Write the agreed rules into `~/.tilemon/attention.md` —
-global, or under a `# board: <slug>` section if repo-specific. If they genuinely want none yet, leave
-the template — but *ask first*.
+| Candidate attention rule | Flags as |
+|---|---|
+| Uncommitted or committed-but-unpushed work in a repo | `waiting` |
+| Failing tests / a red CI run | `blocked` |
+| An open PR awaiting your review (or yours blocked on changes) | `waiting` |
+| Any obvious security issue (e.g. a vulnerable dependency) | `blocked` |
+| An urgent item from a connected tool (email / Slack / tickets) | `waiting` |
+
+Then **also ask, in plain free text, whether anything is specific to particular repos or areas** — e.g.
+*"Is there anything special you'd want flagged for specific projects — something one repo needs watching
+for that the others don't?"* Record those under a `# board: <slug>` section.
+
+A rule is only useful if an agent can actually *check* it — bounded by the tools in its context (git is
+always there; PRs/CI need `gh`/CI access; email needs an MCP), so treat the menu as candidates, not
+guarantees. Write the chosen rules into `~/.tilemon/attention.md`. If they genuinely want none yet,
+leave the template — but you must have *asked* (Gate 2).
 
 ### Then install the Stop hook (core plumbing, opt-out)
 
