@@ -64,6 +64,10 @@ const STYLE = `
 .tlm-bar button.del:hover{border-color:#b0563a;color:#d8674a}
 .tlm-ghost{position:absolute;z-index:800;border:2px solid var(--tlm-gold,#E8C56A);background:rgba(232,197,106,.14);border-radius:5px;
   pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.3)}
+/* the agent's note (the "why" behind a status) — shown on hover, pinned to the tile's bottom */
+.tlm-board .tlm-note{position:absolute;z-index:690;background:rgba(20,18,13,.95);color:var(--tlm-ink,#ECE7DA);
+  font-size:10.5px;line-height:1.35;padding:4px 7px;border:1px solid var(--tlm-line,#2A2820);border-radius:5px;
+  max-height:3.4em;overflow:hidden;pointer-events:none;box-shadow:0 2px 7px rgba(0,0,0,.4)}
 .tlm-board .tlm-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-family:"Space Mono",monospace;font-size:12.5px;color:var(--tlm-dim,#9A9182);text-align:center;padding:24px;pointer-events:none}
 .tlm-board .tlm-toolbar{position:absolute;top:0;left:0;right:0;height:36px;z-index:820;display:flex;align-items:center;gap:8px;padding:0 10px;
@@ -101,7 +105,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
 
   let srcState = opts.state || { name: 'Priorities', _board: null, _path: '', children: [] };
   let root, viewRoot, viewRootId = null, showWeights = false, showDone = opts.showDone !== false;   // done shown by default
-  let tileEls = {}, drag = null, freeze = false, emptyEl = null, ghostEl = null, popEl = null;
+  let tileEls = {}, drag = null, freeze = false, emptyEl = null, ghostEl = null, popEl = null, noteEl = null;
   let toolbarEl = null, statusEl = null, upEl = null, hoverId = null, modDown = false;
   const isShell = () => viewRoot.toolbar !== false;
 
@@ -286,8 +290,22 @@ export function mount(boardEl, controlsEl, opts = {}) {
     }
     // tiny innermost tile: fall back to a popover so its controls are still reachable
     const inner = hoverId ? find(root, hoverId) : null;
-    if (inner && inner._rect && (inner._rect.w < BAR_MIN_W || inner._rect.h < BAR_MIN_H)) showPop(inner); else hidePop();
+    if (inner && inner._rect && (inner._rect.w < BAR_MIN_W || inner._rect.h < BAR_MIN_H)) { showPop(inner); hideNote(); }
+    else { hidePop(); showNote(inner); }   // note (the "why") for the hovered tile
     updateTarget();
+  }
+  // the agent's note for the hovered tile — a caption pinned to the tile's bottom
+  function hideNote() { if (noteEl) { noteEl.remove(); noteEl = null; } }
+  function showNote(node) {
+    hideNote();
+    if (!node || !node.note || !node._rect) return;
+    const r = node._rect;
+    if (r.w < 70 || r.h < 40) return;   // too small — the popover carries the note instead
+    noteEl = doc.createElement('div'); noteEl.className = 'tlm-note'; noteEl.textContent = node.note;
+    noteEl.style.width = Math.max(60, Math.min(r.w - 8, 320)) + 'px';
+    noteEl.style.left = (r.x + 4) + 'px';
+    noteEl.style.bottom = Math.max(4, boardEl.clientHeight - (r.y + r.h) + 5) + 'px';
+    boardEl.appendChild(noteEl);
   }
   // highlight the tile a drag would resize right now — outermost by default, innermost while a
   // modifier is held — so it's obvious what you're about to grab (and it flips with the key).
@@ -313,6 +331,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     popEl.style.right = 'auto'; popEl.style.flexWrap = 'wrap'; popEl.style.maxWidth = '240px'; popEl.style.borderRadius = '7px';
     popEl.style.background = 'var(--tlm-panel,#1C1A14)'; popEl.style.border = '1px solid var(--tlm-line,#2A2820)'; popEl.style.padding = '4px';
     popEl.innerHTML = buildBarHTML(node);
+    if (node.note) { const nd = doc.createElement('div'); nd.style.cssText = 'flex-basis:100%;width:100%;font-size:10px;line-height:1.3;opacity:.85;white-space:normal;padding:2px 2px 0'; nd.textContent = node.note; popEl.appendChild(nd); }
     popEl.addEventListener('pointerdown', e => e.stopPropagation());
     popEl.addEventListener('click', e => { const b = e.target.closest && e.target.closest('button'); if (b) barAction(node, b.dataset.a, b.dataset.s); });
     popEl.addEventListener('change', e => { const t = e.target; if (t && t.dataset && t.dataset.a === 'st') barAction(node, 'st', t.value); });
@@ -427,6 +446,6 @@ export function mount(boardEl, controlsEl, opts = {}) {
     setBoards(list) { boards = list || []; renderChrome(); },
     setShowDone(v) { showDone = !!v; rebuild(); render(); },
     getState() { return srcState; },
-    destroy() { ro.disconnect(); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); hidePop(); rm(toolbarEl); rm(statusEl); rm(upEl); for (const id in tileEls) tileEls[id].remove(); tileEls = {}; },
+    destroy() { ro.disconnect(); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); hidePop(); hideNote(); rm(toolbarEl); rm(statusEl); rm(upEl); for (const id in tileEls) tileEls[id].remove(); tileEls = {}; },
   };
 }

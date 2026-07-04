@@ -180,4 +180,15 @@ assert.ok(tile('stuck')._cls.has('hot') && !tile('stuck')._cls.has('working'), '
 assert.ok(!tile('wait')._cls.has('hot') && !tile('wait')._cls.has('working'), 'waiting glows but does NOT pulse (softer than blocked)');
 assert.ok(tile('wait').style.background !== tile('plain').style.background, 'waiting carries heat (glows amber); todo does not');
 
-console.log(`PASS — data pipeline + inlined boards + hover bars + cross-board writes + add + corner-drag + shell/toolbar + attention channels (todo/in_progress/waiting/blocked) verified`);
+// notes: hovering a tile surfaces its note (the "why" behind the status)
+const noteBoard = { name: 'N', _board: 'n', _path: '', children: [
+  { id: 'q', name: 'Q', weight: 1, status: 'waiting', note: 'which provider — Clerk or Auth0?', _board: 'n', _path: 'q' },
+] };
+board.update(noteBoard); raf.forEach(fn => fn());
+hover('q');
+const noteDiv = boardEl.children.find(c => c.className === 'tlm-note');
+assert.ok(noteDiv && noteDiv.textContent === 'which provider — Clerk or Auth0?', 'hovering a tile with a note surfaces it');
+hover(null);
+assert.ok(!boardEl.children.find(c => c.className === 'tlm-note'), 'note clears when the tile is no longer hovered');
+
+console.log(`PASS — data pipeline + inlined boards + hover bars + notes + cross-board writes + add + corner-drag + shell/toolbar + attention channels (todo/in_progress/waiting/blocked) verified`);

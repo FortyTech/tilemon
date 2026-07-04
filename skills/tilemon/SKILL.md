@@ -33,10 +33,12 @@ scheduled ones — often at the same time. You are just one of those clients. So
    it** — this skill is the complete manual; treat the server as a black box behind the API.
    (TileMon may itself be one of the projects on the board — that's fine; just don't crack open
    its implementation to operate it.)
-2. **Address your work.** `board` = the project's slug (usually the repo/project name).
-   `path` = a stable, dotted id for your task within that board, e.g. `api.refactor-auth`.
-   **Reuse the same board + path across a task's whole life** — that's how a reconnecting agent
-   lands back on the same tile. Address by id, never by display name.
+2. **Address your work.** Find your `board` *with certainty* — don't guess from the folder name and
+   never invent a new board: resolve it from the folder you're working in —
+   `GET /api/resolve?dir=<abs cwd>` → `{board}` (matches the board whose `dir` is the longest prefix
+   of your path). If it 404s, this folder isn't tracked — leave it, don't create one. `path` = a
+   stable, dotted id for your task within that board, e.g. `api.refactor-auth`. **Reuse the same
+   board + path across a task's whole life** so a reconnecting agent lands back on the same tile.
 3. **POST it.** `status` ∈ `todo | in_progress | waiting | blocked | done`. Include a `note` — your
    message (what you're doing / what you need); it shows in the tile's hover actions.
    ```bash
@@ -68,6 +70,17 @@ active in a project, read its `attention.md` rules (the global ones + this board
 things `done`, surface anything the human asked to see. The rules are prose precisely so you can apply
 judgment, and you evaluate them with **your own tools** (rule about git → run git; about logs → read
 them). TileMon prescribes no mechanism and ships no rule-specific tooling.
+
+**Flagging is automatic — NEVER ask the human whether to set a status. Just set it.** Status is the
+one surface you own outright (it's reversible, and it can't touch weights or structure), which is
+exactly why it's safe to write without permission. Asking "want me to flag this?" defeats the entire
+point of the board — it's meant to reflect reality *without* the human tending it. So: if a rule
+matches, flag it silently; if it doesn't, leave it. Never a question. (Weights and structure are the
+opposite — those are the human's; never touch *those* without them. Status is always yours.)
+
+**Only flag what's in your working scope** — the repo/project you're actually operating in. Don't roam
+into other repos to check them, and don't flag a repo you're not working in (a session working *there*,
+or a scheduled sweep, catches it). In-scope → flag automatically; out-of-scope → leave it, no comment.
 
 How those pushes get generated is the operator's choice — you doing it live as you work, a `Stop` hook
 when you pause, CI, a scheduled job, whatever suits them — all of it just `POST`s status. The natural
@@ -106,6 +119,12 @@ human's to decide — but don't make them author it cold. Run a **propose-first 
 draft, they react. Reacting to a wrong draft is far easier than answering "how do you want to
 group these?" from nothing.
 
+**Run setup as a WIZARD with two mandatory gates.** At each gate you present, then **STOP — end your
+turn and wait for the human's reply.** Do not blow through a gate: don't build structure before Gate 1
+is answered, and don't consider setup finished before Gate 2 is answered. These aren't "invite
+corrections and keep going" — they are hard pauses. (Conversational prose is fine; you don't need the
+multiple-choice widget.) The gates: **(1) the buckets, (2) what should get their attention.**
+
 The loop:
 
 0. **Ensure the board is running** (see step 1 of "Reporting status" — `npx tilemon --daemon` if
@@ -116,18 +135,26 @@ The loop:
    field), then directory structure (nested folders → nested groups), then a categorised doc
    (e.g. a project index in a `CLAUDE.md`). Survey the *workspace's own* signals — never TileMon's
    source. **Do NOT guess weights** — importance is the human's (see below).
-2. **Propose a concrete strawman in prose, and invite free-text corrections** ("move X, split Y,
-   drop Z") — a board per project grouped into a few named buckets. Propose the **grouping**, not
-   the sizes. Reacting to a written draft is lower-friction than multiple-choice prompts, so prefer
-   it; reserve a formal question for a *genuine* either/or blocker, not for things you can default.
+2. **GATE 1 — buckets.** Present your proposed grouping as a **table, one bucket per row** (rows, not
+   columns — there can be many buckets, and a column each would squash them):
+
+   | Bucket | Projects |
+   |---|---|
+   | Products | webapp, api, mobile |
+   | Clients  | acme, globex |
+   | Internal | docs, scripts |
+
+   Propose the **grouping only** (which projects sit in which bucket) — not sizes/weights. Then
+   **STOP and wait.** Build **nothing** until the human has confirmed or corrected the table. This is
+   a real pause, not a rhetorical "let me know."
 
 **Keep the surface coarse — this is the cardinal rule.** Bootstrap builds *structure* (buckets +
 project boards), **not a task list**. Do NOT seed granular tasks/tickets — that makes the board
 busy and *costs* the human attention, which is the one thing the tool exists to protect. Detail
 belongs in drill-down and arrives naturally as agents flag their live work. If the board ever feels
 busy, the fix is to *subtract*, not add.
-3. **React → redraft → confirm.** Once agreed, build it **through the server's API** (below), not
-   by writing files. The server live-reloads, so the human watches the board fill in as you go.
+3. **Only after Gate 1 is answered, build it** through the server's API (below), not by writing
+   files. The server live-reloads, so the human watches the board fill in as you go.
 
 **Weight/importance is the human's — do NOT set it.** Build everything at the default (equal)
 weight and leave allocation to the human, who spends the importance budget by dragging tiles.
@@ -142,15 +169,18 @@ New nodes are born at weight 1 (equal), which is exactly the neutral starting po
 
 ```bash
 U=${TILEMON_URL:-http://localhost:4000}
-# 1. a board per project (bare; returns its slug)
-curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp"}'            # -> {"slug":"webapp"}
-curl -s -X POST $U/api/board -d '{"name":"API","slug":"api"}'
+# 1. a board per project (bare; returns its slug). ALWAYS pass `dir` = the project's absolute folder —
+#    that's the folder↔board link. It lets any agent later resolve "which board is this folder?" with
+#    certainty (GET /api/resolve), instead of guessing a slug or inventing a duplicate board.
+curl -s -X POST $U/api/board -d '{"name":"Webapp","slug":"webapp","dir":"/home/you/work/webapp"}'   # -> {"slug":"webapp"}
+curl -s -X POST $U/api/board -d '{"name":"API","slug":"api","dir":"/home/you/work/api"}'
 # 2. buckets on the home board (a bucket is just an item you add into); "tilemon" is the seeded home board
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","kind":"item","name":"Products"}'   # -> node id "products"
 # 3. include the EXISTING project boards into the bucket (born at weight 1 — DON'T set weights)
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"webapp"}'
 curl -s -X POST $U/api/node  -d '{"board":"tilemon","path":"products","kind":"include","target":"api"}'
 # then: leave weights equal. The human drags to allocate importance. Reorganise later with /api/move.
+# (Set dir on an existing board later with: PATCH /api/board {"slug":"webapp","dir":"..."} )
 ```
 
 Node ids are derived from the name/slug (e.g. bucket "Products" → `products`, an include of
@@ -163,27 +193,36 @@ reacting-to-a-draft beats dragging tiles. Ongoing maintenance is different: rewe
 in the UI, and move/regroup via `/api/move`. Ongoing *status* updates use `POST /api/status`
 (above); only the initial structure is built here — and only ever through the API.
 
-### Setup step — always ask what should grab their attention (write attention.md)
+### GATE 2 — ask what should get their attention (write attention.md)
 
-The board only earns its keep once it knows what deserves *their* attention, so **always ask** — never
-leave `attention.md` blank and never assume they'll write it later. After the structure's built, ask
-the human what they want surfaced, offering a few concrete examples to react to (they pick, edit, or
-add their own). Same rule as weights: you **elicit and record, you never impose or guess**.
+The board only earns its keep once it knows what deserves *their* attention, so this is a **mandatory
+gate**, not an optional afterthought: after the structure's built, **STOP and directly ask** the human
+what they want surfaced, offering a few concrete examples to react to — then **wait for their answer**
+before you finish. **Setup is NOT complete until you've asked and recorded a reply** (even if the reply
+is "none for now"). Never leave `attention.md` blank because you skipped the question. Same rule as
+weights: you **elicit and record, you never impose or guess**.
 
-The headline is intrinsic and doesn't need a rule: **an agent that needs the human already flags it**
-— `waiting` for a decision/input, `blocked` when something's wrong. Name that so they know it's
-automatic; then ask what *ambient* things to add on top:
-- uncommitted or committed-but-unpushed work in a repo → usually `waiting`
-- failing tests / a red CI run → usually `blocked`
-- an open PR awaiting their review (or theirs blocked on changes) → `waiting`
-- any obvious security issue (e.g. a vulnerable dependency) → `blocked`
-- an urgent item from a connected tool (email / Slack / tickets) → `waiting`
+First, name the part that's automatic and needs no rule: **an agent that needs the human already flags
+it** — `waiting` for a decision/input, `blocked` when something's wrong. Then present this **curated
+list as a menu to pick from** (they choose which apply, edit wording, or add their own) — these are the
+candidate lines that go into `~/.tilemon/attention.md`:
 
-A rule is only useful if an agent can actually *check* it — that's bounded by the tools/integrations
-in the agent's context (git is always there; PRs/CI need `gh`/CI access; email needs an MCP). So treat
-the list as illustrative, not guaranteed. Write the agreed rules into `~/.tilemon/attention.md` —
-global, or under a `# board: <slug>` section if repo-specific. If they genuinely want none yet, leave
-the template — but *ask first*.
+| Candidate attention rule | Flags as |
+|---|---|
+| Uncommitted or committed-but-unpushed work in a repo | `waiting` |
+| Failing tests / a red CI run | `blocked` |
+| An open PR awaiting your review (or yours blocked on changes) | `waiting` |
+| Any obvious security issue (e.g. a vulnerable dependency) | `blocked` |
+| An urgent item from a connected tool (email / Slack / tickets) | `waiting` |
+
+Then **also ask, in plain free text, whether anything is specific to particular repos or areas** — e.g.
+*"Is there anything special you'd want flagged for specific projects — something one repo needs watching
+for that the others don't?"* Record those under a `# board: <slug>` section.
+
+A rule is only useful if an agent can actually *check* it — bounded by the tools in its context (git is
+always there; PRs/CI need `gh`/CI access; email needs an MCP), so treat the menu as candidates, not
+guarantees. Write the chosen rules into `~/.tilemon/attention.md`. If they genuinely want none yet,
+leave the template — but you must have *asked* (Gate 2).
 
 ### Then install the Stop hook (core plumbing, opt-out)
 
@@ -194,14 +233,36 @@ It's a Claude Code `Stop` hook that fires when the agent pauses for input and nu
 to apply `attention.md` and push updates before stopping. Claude-Code-specific; other setups push
 however they push.
 
-Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps):
+Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps). It **resolves this folder
+to its board** (`GET /api/resolve` — folder → board via the `dir` link) so the agent flags the right
+tile and never invents one, then injects the operator's LIVE `attention.md` rules and demands a
+per-rule check. It stays silent (no block) if the folder isn't tracked or the board's unreachable —
+nothing to flag. It computes nothing and hard-codes no rule (evaluation is the agent's job):
 ```js
 #!/usr/bin/env node
-// TileMon Stop hook — on pause, once per turn, nudge the agent to honour attention.md.
-let s = ''; process.stdin.on('data', c => (s += c)).on('end', () => {
+// TileMon Stop hook — resolve folder→board, inject live attention.md rules, demand a per-rule check.
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+let s = ''; process.stdin.on('data', c => (s += c)).on('end', async () => {
   try { if (JSON.parse(s).stop_hook_active === true) process.exit(0); } catch {}   // already nudged this turn → let it stop
-  process.stdout.write(JSON.stringify({ decision: 'block', reason:
-    "Before finishing, update the TileMon board (POST /api/status to $TILEMON_URL, else http://localhost:4000; use the tilemon skill if available): if you're pausing because you need the human, mark your task 'waiting' (you need a decision/input) or 'blocked' (something went wrong); apply any ~/.tilemon/attention.md rules that concern this repo. If nothing needs updating, just stop." }));
+  const url = process.env.TILEMON_URL || 'http://localhost:4000';
+  const cwd = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+  let board = null;
+  try {
+    const r = await fetch(`${url}/api/resolve?dir=${encodeURIComponent(cwd)}`);
+    if (r.status === 404) process.exit(0);            // folder not tracked → stay quiet
+    if (r.ok) board = (await r.json()).board;
+  } catch { process.exit(0); }                         // board unreachable → don't block
+  if (!board) process.exit(0);
+  let rules = '';
+  try { rules = readFileSync(join(homedir(), '.tilemon', 'attention.md'), 'utf8')
+    .split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).join('\n').trim(); } catch {}
+  const reason = `[TileMon hook] This folder is TileMon board '${board}' — flag THAT board, never create a new one. `
+    + `Before you stop: if you're pausing because you need the human, flag 'waiting' (need a decision/input) or 'blocked' (something's wrong) with a note, via the tilemon skill (POST /api/status to ${url}).`
+    + (rules ? ` Then check EACH of these attention rules against what you're working on and flag any that match (one by one, don't skip):\n${rules}\n` : ` `)
+    + `If nothing matches, just stop.`;
+  process.stdout.write(JSON.stringify({ decision: 'block', reason }));
   process.exit(0);
 });
 ```
