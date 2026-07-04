@@ -185,6 +185,7 @@ const noteBoard = { name: 'N', _board: 'n', _path: '', children: [
   { id: 'q', name: 'Q', weight: 1, status: 'waiting', note: 'which provider — Clerk or Auth0?', _board: 'n', _path: 'q' },
 ] };
 board.update(noteBoard); raf.forEach(fn => fn());
+assert.ok(tile('q').title === 'Q — which provider — Clerk or Auth0?', 'every tile carries a native title tooltip (name + note) — identifiable even when too small to label');
 hover('q');
 const noteDiv = boardEl.children.find(c => c.className === 'tlm-note');
 assert.ok(noteDiv && noteDiv.textContent === 'which provider — Clerk or Auth0?', 'hovering a tile with a note surfaces it');

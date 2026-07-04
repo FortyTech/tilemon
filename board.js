@@ -233,12 +233,14 @@ export function mount(boardEl, controlsEl, opts = {}) {
       el.classList.toggle('working', !!node._working);
       el.classList.toggle('done', !!node._done);
       el.classList.toggle('board', isBoard);
+      // every tile gets a native tooltip (name + note) so a too-small-to-label tile is still identifiable on hover
+      el.title = node.name ? (node.name + (node.note ? ' — ' + node.note : '')) : '';
       const wt = showWeights ? `<span class="wt">${node.weight.toFixed(node.weight < 10 ? 1 : 0)}</span>` : '';
       const bar = el._bar ? el._bar.outerHTML : '';   // preserved below by re-applying hover
       let html = '';
-      if (isParent) { if (r.w > 54 && r.h > 30) html = `<div class="hd"><span class="nm">${esc(node.name)}${isBoard ? ' <span class="bl" title="board">↗</span>' : ''}</span>${wt}</div>`; }
-      else if (isBoard) { if (r.w > 40 && r.h > 26) { const b = node._missing ? 'missing ⚠' : node._cycle ? 'cycle ⟳' : 'empty board'; html = `<div class="leaf"><span class="nm">${esc(node.name)}</span><span class="badge">${b}</span></div>`; } }
-      else { if (r.w > 40 && r.h > 26) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${wt}</div>`; }
+      if (isParent) { if (r.w > 44 && r.h > 24) html = `<div class="hd"><span class="nm">${esc(node.name)}${isBoard ? ' <span class="bl" title="board">↗</span>' : ''}</span>${wt}</div>`; }
+      else if (isBoard) { if (r.w > 34 && r.h > 20) { const b = node._missing ? 'missing ⚠' : node._cycle ? 'cycle ⟳' : 'empty board'; html = `<div class="leaf"><span class="nm">${esc(node.name)}</span><span class="badge">${b}</span></div>`; } }
+      else { if (r.w > 34 && r.h > 20) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${wt}</div>`; }
       if (el._html !== html) { el.innerHTML = html; el._html = html; el._bar = null; }   // wipes any bar; hover re-adds
     }
     for (const id in tileEls) { if (!seen.has(id)) { tileEls[id].remove(); delete tileEls[id]; } }
