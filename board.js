@@ -27,6 +27,14 @@ const STATUS_HEAT = { todo: 0, in_progress: 0, waiting: 0.5, blocked: 1 };
 const STATUSES = ['todo', 'in_progress', 'waiting', 'blocked', 'done'];
 const STAT_LABEL = { todo: 'todo', in_progress: 'in progress', waiting: 'waiting', blocked: 'blocked', done: 'done' };
 const DONE_COLOR = 'rgb(74,92,58)';
+// Done cooldown: how long a `done` tile lingers (from when it was marked done, via its `seen` stamp)
+// before it fades off the board. A dial, not a toggle: 0 = hide instantly, Infinity = show forever
+// (the old show-done). Default 5m — long enough to see things complete, short enough to stay coarse.
+const DEFAULT_DONE_COOLDOWN = 5 * 60 * 1000;
+const DONE_STEPS = [
+  { ms: 0, label: 'off' }, { ms: 60 * 1000, label: '1m' }, { ms: 5 * 60 * 1000, label: '5m' },
+  { ms: 10 * 60 * 1000, label: '10m' }, { ms: 30 * 60 * 1000, label: '30m' }, { ms: Infinity, label: 'always' },
+];
 // liveness (ORTHOGONAL to status): a tile is "live" (shows the dot) while its status was seen within
 // this window, whatever that status is — the dot means "an agent is attached and fresh here", not
 // "in progress" (a live `waiting` = an agent's waiting on you right now). Past the window the agent's
@@ -107,14 +115,21 @@ export function mount(boardEl, controlsEl, opts = {}) {
   const cb = k => opts[k] || (() => {});
   const onStatusChange = cb('onStatusChange'), onWeightChange = cb('onWeightChange');
   const onAddNode = cb('onAddNode'), onAddBoard = cb('onAddBoard'), onRenameNode = cb('onRenameNode'), onDeleteNode = cb('onDeleteNode');
-  const onSetToolbar = cb('onSetToolbar'), onOpenBoard = cb('onOpenBoard');
+  const onSetToolbar = cb('onSetToolbar'), onOpenBoard = cb('onOpenBoard'), onDoneCooldownChange = cb('onDoneCooldownChange');
   let boards = opts.boards || [];
   const doc = boardEl.ownerDocument, win = doc.defaultView || globalThis;
   injectStyle(doc);
   boardEl.classList.add('tlm-board');
 
   let srcState = opts.state || { name: 'Priorities', _board: null, _path: '', children: [] };
-  let root, viewRoot, viewRootKey = null, showWeights = false, showDone = opts.showDone !== false;   // done shown by default
+  let root, viewRoot, viewRootKey = null, showWeights = false;
+  // done visibility is a cooldown (ms), not a boolean; back-compat: opts.showDone true=>∞, false=>0
+  let doneCooldown = opts.doneCooldown != null ? opts.doneCooldown
+    : (opts.showDone === true ? Infinity : opts.showDone === false ? 0 : DEFAULT_DONE_COOLDOWN);
+  const doneVisible = n => doneCooldown === Infinity ? true
+    : (!doneCooldown ? false : !!n.seen && (Date.now() - n.seen) < doneCooldown);
+  const doneLabel = () => (DONE_STEPS.find(s => s.ms === doneCooldown) || { label: 'off' }).label;
+  const nextDoneStep = cur => { const i = DONE_STEPS.findIndex(s => s.ms === cur); return DONE_STEPS[(i + 1) % DONE_STEPS.length].ms; };
   let tileEls = {}, drag = null, freeze = false, emptyEl = null, ghostEl = null;
   let toolbarEl = null, statusEl = null, upEl = null, hoverKey = null, modDown = false;
   // A node's GLOBALLY-unique key = owning board + local path (node ids are only unique within a
@@ -125,7 +140,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   const num = (v, d) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : d; };
   function clone(n) {
     const isDone = n.status === 'done';
-    if (isDone && !showDone) return null;
+    if (isDone && !doneVisible(n)) return null;
     const out = { id: n.id, name: n.name, weight: num(n.weight, 1), status: n.status, note: n.note, seen: n.seen, toolbar: n.toolbar,
       _board: n._board, _path: n._path, _boardLink: n._boardLink, _ro: n._ro, _missing: n._missing, _cycle: n._cycle,
       heat: STATUS_HEAT[n.status] ?? 0, _done: isDone || undefined };
@@ -416,7 +431,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     const crumb = `<span class="tb-name">` + bc.map((n, i) => i === bc.length - 1 ? `<b>${esc(n.name)}</b>` : `<span class="cr" data-key="${esc(nkey(n))}">${esc(n.name)}</span> ／ `).join('') + `</span>`;
     toolbarEl.innerHTML = crumb
       + `<button id="tbAdd" title="add item">＋</button><button id="tbAddb" title="add board">⧉</button><span class="tb-spacer"></span>`
-      + sw + `<button id="tbWt">weights: ${showWeights ? 'on' : 'off'}</button><button id="tbDone">done: ${showDone ? 'shown' : 'hidden'}</button>`
+      + sw + `<button id="tbWt">weights: ${showWeights ? 'on' : 'off'}</button><button id="tbDone" title="how long done tiles linger before they fade off">done: ${doneLabel()}</button>`
       + `<button id="tbShell" title="hide the shell chrome for this board">shell</button>`;
     const q = s => toolbarEl.querySelector(s);
     toolbarEl.querySelectorAll('.cr').forEach(s => s.onclick = () => { const t = findByKey(root, s.dataset.key); if (t) { viewRoot = t; viewRootKey = t === root ? null : nkey(t); render(); } });
@@ -425,7 +440,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     q('#tbAdd').onclick = () => { const n = win.prompt('New item'); if (n && n.trim()) { const t = containerTarget(viewRoot); onAddNode(t.board, t.path, 'item', n.trim()); } };
     q('#tbAddb').onclick = () => { const n = win.prompt('New nested board'); if (n && n.trim()) { const t = containerTarget(viewRoot); onAddBoard(t.board, t.path, n.trim()); } };
     q('#tbWt').onclick = () => { showWeights = !showWeights; render(); };
-    q('#tbDone').onclick = () => { showDone = !showDone; rebuild(); render(); };
+    q('#tbDone').onclick = () => { doneCooldown = nextDoneStep(doneCooldown); onDoneCooldownChange(doneCooldown); rebuild(); render(); };
     if (!statusEl) { statusEl = doc.createElement('div'); statusEl.className = 'tlm-status'; boardEl.appendChild(statusEl); }
     statusEl.textContent = 'hover for actions · drag = resize its group · ⌘/Ctrl/Alt-drag = resize this tile · double-click = drill in';
   }
@@ -433,7 +448,10 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function render() { renderBoard(); renderChrome(); applyHover(); }
 
   const ro = new ResizeObserver(() => { renderBoard(); applyHover(); }); ro.observe(boardEl);
-  const liveTimer = win.setInterval(paintLiveness, 60000);   // re-evaluate live→stalled as time passes
+  const liveTimer = win.setInterval(() => {   // re-evaluate over time: live→stalled, and expire done tiles past their cooldown
+    if (doneCooldown && doneCooldown !== Infinity) { rebuild(); render(); }   // finite cooldown → re-clone drops newly-expired done (also repaints liveness)
+    else paintLiveness();
+  }, 60000);
   if (liveTimer && typeof liveTimer.unref === 'function') liveTimer.unref();   // don't hold a Node process alive (test/headless)
   boardEl.addEventListener('pointermove', onHover);
   boardEl.addEventListener('pointerleave', () => { hoverKey = null; applyHover(); });
@@ -444,7 +462,8 @@ export function mount(boardEl, controlsEl, opts = {}) {
   return {
     update(newState) { if (drag) return; srcState = newState; rebuild(); render(); },
     setBoards(list) { boards = list || []; renderChrome(); },
-    setShowDone(v) { showDone = !!v; rebuild(); render(); },
+    setShowDone(v) { doneCooldown = v ? Infinity : 0; rebuild(); render(); },   // back-compat shim over the cooldown dial
+    setDoneCooldown(ms) { doneCooldown = ms; rebuild(); render(); },
     getState() { return srcState; },
     destroy() { ro.disconnect(); win.clearInterval(liveTimer); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); rm(toolbarEl); rm(statusEl); rm(upEl); for (const k in tileEls) tileEls[k].remove(); tileEls = {}; },
   };

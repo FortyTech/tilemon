@@ -64,7 +64,11 @@ const onRenameNode = (b, path, name) => send('PATCH', '/api/node', { board: b, p
 const onDeleteNode = (b, path) => send('DELETE', '/api/node', { board: b, path });
 const onSetToolbar = (b, path, toolbar) => send('PATCH', '/api/node', { board: b, path, toolbar });
 const openBoard = s => { history.pushState({ slug: s }, '', '/boards/' + s); load(s); };
-const cbs = { onStatusChange, onWeightChange, onAddNode, onAddBoard, onMoveNode, onRenameNode, onDeleteNode, onSetToolbar, onOpenBoard: openBoard };
+// done-cooldown is a viewer preference — persist it here (localStorage), not on the board.
+const DONE_KEY = 'tlm-done-cooldown';
+const readDoneCooldown = () => { const r = localStorage.getItem(DONE_KEY); return r == null ? undefined : (r === 'Infinity' ? Infinity : Number(r)); };
+const onDoneCooldownChange = ms => localStorage.setItem(DONE_KEY, ms === Infinity ? 'Infinity' : String(ms));
+const cbs = { onStatusChange, onWeightChange, onAddNode, onAddBoard, onMoveNode, onRenameNode, onDeleteNode, onSetToolbar, onOpenBoard: openBoard, onDoneCooldownChange };
 
 async function load(s) {
   slug = s;
@@ -73,7 +77,7 @@ async function load(s) {
     const state = await getState(s);
     document.getElementById('empty')?.remove();
     boardEl.style.display = '';
-    if (!board) board = mount(boardEl, null, { state, boards: list, ...cbs });
+    if (!board) board = mount(boardEl, null, { state, boards: list, doneCooldown: readDoneCooldown(), ...cbs });
     else { board.update(state); board.setBoards(list); }
   } catch (e) {
     console.error(e);
