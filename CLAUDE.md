@@ -72,9 +72,12 @@ because it *can't* reach weight or structure.
   uniformly recursive, not leaf-only. A node's own status maps to heat and acts as a
   **floor**; a node with children also rolls up heat area-weighted, so displayed heat is
   `max(own, rollup)`. A statusless node behaves as pure rollup (exactly the old model).
-- `done` (at any level) drops that node and its subtree off the board. The **show-done**
-  toggle (`board.setShowDone(true)`) renders them dimmed instead, so `done` is reversible
-  from the board — never a one-way trapdoor.
+- `done` (at any level) drops that node and its subtree off the board — but on a **cooldown**,
+  not instantly: a viewer-side dial (`board.setDoneCooldown(ms)`; toolbar cycles
+  off/1m/5m/10m/30m/always, default 5m) keeps a just-completed tile visible (dimmed sage) for that
+  long, measured from its `seen` stamp, then fades it. `0` = hide instantly, `Infinity` = show forever
+  (the old show-done). `setShowDone(bool)` remains as a shim over the two extremes. So `done` is
+  reversible and gives a moment of "handled" feedback — never a one-way trapdoor.
 - **Liveness (`seen`) — orthogonal to status.** Every `/api/status` upsert stamps `seen` (epoch ms).
   The renderer shows a live dot on *any* fresh tile (any status, own or a fresh descendant, seen
   `< LIVE_TTL` = 10 min) — the dot means "an agent is attached and fresh here", **not** "in progress":

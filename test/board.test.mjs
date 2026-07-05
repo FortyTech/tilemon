@@ -85,6 +85,21 @@ assert.ok(tile('gone') && heatOf('gone') === 'rgb(74,92,58)', 'show-done reveals
 board.setShowDone(false); raf.forEach(fn => fn());
 assert.ok(!tile('gone'), 'hiding done removes it');
 
+// 3b. done COOLDOWN — a done tile shows only while within the cooldown of its `seen` stamp
+const now = Date.now();
+const s3b = stampSingle({ name: 'T', children: [
+  { id: 'fresh',  name: 'Fresh',  weight: 1, status: 'done', seen: now },                  // just marked done
+  { id: 'old',    name: 'Old',    weight: 1, status: 'done', seen: now - 20 * 60 * 1000 }, // done 20 min ago
+  { id: 'noseen', name: 'NoSeen', weight: 1, status: 'done' },                             // no stamp (old data)
+] }, 't');
+board.setDoneCooldown(10 * 60 * 1000); board.update(s3b); raf.forEach(fn => fn());   // 10-min cooldown
+assert.ok(tile('fresh') && !tile('old') && !tile('noseen'), 'cooldown: fresh done shown; expired + unstamped hidden');
+board.setDoneCooldown(Infinity); board.update(s3b); raf.forEach(fn => fn());
+assert.ok(tile('fresh') && tile('old') && tile('noseen'), 'cooldown=Infinity (always) shows every done tile');
+board.setDoneCooldown(0); board.update(s3b); raf.forEach(fn => fn());
+assert.ok(!tile('fresh') && !tile('old'), 'cooldown=0 (off) hides done immediately');
+board.setShowDone(false);   // reset for later tests
+
 // 4. inlined nested board + rollup across the boundary
 const inlined = { name: 'Home', _board: 'home', _path: '', children: [
   { id: 'local', name: 'Local', weight: 1, status: 'todo', _board: 'home', _path: 'local' },
