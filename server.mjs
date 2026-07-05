@@ -17,6 +17,7 @@
 //   GET    /board.js                -> renderer module
 //   GET    /api/boards              -> [{ slug, name, visibility, source, dir? }]
 //   GET    /api/resolve?dir=<abs>   -> { board, dir } : the board whose `dir` is the longest prefix of <abs> (folder -> board)
+//   GET    /api/attention?board=<slug> -> { board, items:[{board,path,name,note,status,seen}] } : waiting/blocked within a board's TREE (follows includes, blocked first); default slug = tilemon (home)
 //   GET    /api/state?board=<slug>  -> resolved tree (includes -> navigable summary tiles, acyclic)
 //   GET    /api/events              -> Server-Sent Events; "change" on any write
 //   POST   /api/status {board,path,status,note?,name?} -> AGENT: upsert path, set status/note
@@ -37,7 +38,7 @@ import http from 'node:http';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -100,6 +101,15 @@ function uniq(base, taken) {
 async function readBoard(slug) {
   return JSON.parse(await readFile(boardFile(slug), 'utf8'));
 }
+// Canonicalise a folder path for the folder<->board link: strip trailing slashes, then resolve
+// symlinks via realpath so a hook's cwd matches the stored `dir` even across symlinked/aliased
+// paths. Falls back to the string form when the path isn't on disk (e.g. a moved/deleted repo).
+function canonDir(s) {
+  if (!s) return s;
+  let t = String(s).replace(/\/+$/, '');
+  try { t = realpathSync(t); } catch { /* not on disk — use the plain string form */ }
+  return t.replace(/\/+$/, '');
+}
 let writing = Promise.resolve();
 function writeBoard(slug, data) {
   writing = writing.then(async () => {
@@ -144,7 +154,7 @@ async function resolveBoard(slug, chain = []) {
                _missing: !sub || undefined, _cycle: (sub && sub.__cycle) || undefined,
                children: cyc ? [] : (sub.children || []) };              // children carry the sub-board's own stamps
     }
-    const out = { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, _board: slug, _path: path };
+    const out = { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, seen: node.seen, _board: slug, _path: path };
     if (ro) out._ro = true;
     if (node.children && node.children.length) {
       out.children = [];
@@ -215,6 +225,7 @@ function upsert(board, path, { status, note, name }) {
     }
     node = next;
   });
+  node.seen = Date.now();   // liveness heartbeat: stamped on every status write; client shows "live" dot while fresh
   return node;
 }
 
@@ -259,16 +270,44 @@ const server = http.createServer(async (req, res) => {
     const q = url.searchParams.get('dir');
     if (!q) return json(res, 400, { error: 'missing dir' });
     try {
-      const norm = s => s.replace(/\/+$/, '');
-      const target = norm(q);
-      let best = null;
+      const target = canonDir(q);
+      let best = null, bestLen = -1;
       for (const b of await listBoards()) {
         if (!b.dir) continue;
-        const d = norm(b.dir);
-        if (target === d || target.startsWith(d + '/')) { if (!best || d.length > norm(best.dir).length) best = b; }
+        const d = canonDir(b.dir);
+        if (target === d || target.startsWith(d + '/')) { if (d.length > bestLen) { best = b; bestLen = d.length; } }
       }
       if (!best) return json(res, 404, { error: 'no board maps to ' + q });
       json(res, 200, { board: best.slug, dir: best.dir });
+    } catch (e) { json(res, 500, { error: String(e) }); }
+    return;
+  }
+
+  if (req.method === 'GET' && p === '/api/attention') {   // what needs the human within a board's TREE (follows includes); default = home board
+    const slug = url.searchParams.get('board') || 'tilemon';
+    try {
+      const tree = await resolveBoard(slug);   // resolved => includes inlined; every node stamped with owning _board/_path
+      if (!tree) return json(res, 404, { error: 'board not found: ' + slug });
+      const keys = new Set(), out = [];
+      // `area` = the tile's share of the whole board = path-product of normalized sibling weights
+      // (importance IS on-screen area, so this is the human's revealed attention allocation, exact
+      // and resolution-independent — no need to measure rendered pixels). Carried down the walk.
+      (function walk(node, acc) {
+        const kids = node.children || [];
+        const tot = kids.reduce((s, c) => s + (c.weight ?? 1), 0) || 1;
+        for (const c of kids) {
+          const area = acc * ((c.weight ?? 1) / tot);
+          if (c.status === 'waiting' || c.status === 'blocked') {
+            const key = c._board + '::' + c._path;   // address on the OWNING board; dedupe a board included more than once
+            if (!keys.has(key)) { keys.add(key);
+              out.push({ board: c._board, path: c._path, name: c.name || c.id, status: c.status, note: c.note || '', seen: c.seen, area }); }
+          }
+          walk(c, area);
+        }
+      })(tree, 1);
+      // blocked before waiting; within a level, biggest area (most of your attention) first
+      out.sort((a, z) => ((a.status === 'blocked' ? 0 : 1) - (z.status === 'blocked' ? 0 : 1)) || (z.area - a.area));
+      json(res, 200, { board: slug, items: out });
     } catch (e) { json(res, 500, { error: String(e) }); }
     return;
   }
@@ -411,7 +450,7 @@ const server = http.createServer(async (req, res) => {
       }
       const src = (typeof source === 'string' && source.trim()) ? source.trim() : 'native';
       const board = { name: nm, visibility: 'private', source: src, children: [] };
-      if (typeof dir === 'string' && dir.trim()) board.dir = dir.trim();   // the folder this board maps to (the link)
+      if (typeof dir === 'string' && dir.trim()) board.dir = canonDir(dir.trim());   // the folder this board maps to (the link), canonicalised
       await writeBoard(slug, board);
       broadcast();
       json(res, 200, { ok: true, slug });
@@ -425,7 +464,7 @@ const server = http.createServer(async (req, res) => {
       if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing slug' });
       if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
       const board = await readBoard(slug);
-      if (typeof dir === 'string') { const d = dir.trim(); if (d) board.dir = d; else delete board.dir; }   // '' clears the link
+      if (typeof dir === 'string') { const d = dir.trim(); if (d) board.dir = canonDir(d); else delete board.dir; }   // '' clears the link
       if (name != null && String(name).trim()) board.name = String(name).trim();
       await writeBoard(slug, board); broadcast();
       json(res, 200, { ok: true });

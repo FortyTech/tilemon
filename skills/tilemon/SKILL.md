@@ -40,19 +40,44 @@ scheduled ones — often at the same time. You are just one of those clients. So
    stable, dotted id for your task within that board, e.g. `api.refactor-auth`. **Reuse the same
    board + path across a task's whole life** so a reconnecting agent lands back on the same tile.
 3. **POST it.** `status` ∈ `todo | in_progress | waiting | blocked | done`. Include a `note` — your
-   message (what you're doing / what you need); it shows in the tile's hover actions.
+   message (what you're doing / what you need); it shows inline on the tile (and in its tooltip). Also
+   pass a **`name`** in **plain language a human reads at a glance** — "Uncommitted changes", "Deploy
+   to prod" — **never a cryptic code or abbreviation** ("vcs", "wip"); the human is looking at this,
+   not you.
    ```bash
    curl -s -X POST "$TILEMON_URL/api/status" \
      -H 'content-type: application/json' \
-     -d '{"board":"webapp","path":"api.refactor-auth","status":"waiting","note":"which auth provider do you want — Clerk or Auth0?"}'
+     -d '{"board":"webapp","path":"api.refactor-auth","status":"waiting","name":"Refactor auth","note":"which auth provider do you want — Clerk or Auth0?"}'
    ```
    Add `-H "Authorization: Bearer $TILEMON_TOKEN"` if the server requires a token.
    From inside the tilemon repo: `node examples/flag.mjs <board> <dotted.id.path> <status> "<note>"`.
-4. **When to fire:** *start* → `in_progress`; *finish* → `done` (drops off). When you **need the
-   human**, pick the level by severity: `waiting` = you need their input/decision/answer/approval and
-   nothing is broken (glows amber — present, not urgent); `blocked` = something is *wrong* — an error,
-   a failing build, an obstacle you can't get past (glows red **and pulses**, louder). Always attach a
-   `note` saying exactly what you need. A `{"ok":true}` response means it's live.
+4. **When to fire:** think of `in_progress` as a **mute**, not a new light. A box glows because it
+   needs the human (`waiting`/`blocked`); when you pick that work up, set it `in_progress` and the glow
+   goes **off** ("I'm on it, look away"). So the trigger is: **you start handling a glowing box → mute
+   it** (the start hook shows you what's glowing so you can match yours). Then, when you hand back:
+   `done` if finished (drops off), or **flip it back** to `waiting` = you need their input/decision and
+   nothing's broken (amber, present) / `blocked` = something's *wrong*, an error or obstacle you can't
+   pass (red **and pulses**, louder). Always attach a `note` saying exactly what you need. **Don't
+   create a box just to announce you're busy** — an agent quietly working with nothing flagged needs no
+   tile (in_progress carries no heat). Boxes exist to demand attention; muting is how you say "handled
+   for now." A `{"ok":true}` response means it landed.
+
+### Liveness — a heartbeat that shows you're still attached
+
+Every status write stamps a **heartbeat** (`seen`), and the board shows a live dot on any tile with a
+fresh one. **Liveness is orthogonal to status** — the dot means "an agent is attached and fresh here",
+whatever the status: a live `waiting` reads as "an agent is waiting on you *right now*", distinct from
+one that's been sitting untouched for an hour. Once a tile goes stale (no write for ~10 min) it loses
+the dot; a stale `in_progress` also **dims and greys** (the agent walked away mid-task — exactly what
+the human wants to spot), while a stale `waiting`/`blocked` keeps its glow (it still needs them). So:
+
+- On a **long-running** task, **re-POST the same status** (same `board`+`path`) every few minutes as
+  you make progress — a cheap heartbeat that keeps the dot live and the note current. It upserts, so
+  re-affirming costs nothing and won't duplicate the tile.
+- Before you stop, **resolve the tile**: `done` if finished, `waiting`/`blocked` if you need the
+  human. Don't leave a bare `in_progress` behind — a live task nobody's working is a false signal.
+  (If work genuinely pauses without needing the human, that's fine — it'll grey out to show it's idle,
+  which is honest.)
 
 You can only ever set **status/note**, on any node, via this endpoint — never weights or
 structure. The human owns importance. That's why one board-wide token is safe: it can't
@@ -224,16 +249,53 @@ always there; PRs/CI need `gh`/CI access; email needs an MCP), so treat the menu
 guarantees. Write the chosen rules into `~/.tilemon/attention.md`. If they genuinely want none yet,
 leave the template — but you must have *asked* (Gate 2).
 
-### Then install the Stop hook (core plumbing, opt-out)
+### Then install the hooks — start + stop (core plumbing, opt-out)
 
-The board staying current depends on this, so **install it by default as part of setup** — it's core
-plumbing, not an optional extra. **Don't ask a yes/no**: add it, then tell the human you did and how to
-opt out (delete the `Stop` entry from `.claude/settings.json`). Only skip it if they told you not to.
-It's a Claude Code `Stop` hook that fires when the agent pauses for input and nudges that agent — once —
-to apply `attention.md` and push updates before stopping. Claude-Code-specific; other setups push
-however they push.
+The board staying current depends on these, so **install them by default as part of setup** — core
+plumbing, not optional extras. **Don't ask a yes/no**: add them, then tell the human you did and how to
+opt out (delete the entries from `.claude/settings.json`). Only skip if they told you not to. Both are
+Claude-Code-specific (other setups push however they push). Neither hook *writes* a tile itself — a
+dumb script can't know which of the human's boxes is "the one you're handling" (that's a judgement).
+Instead they bracket your turn: **start** shows you what's glowing so you can mute the right box, **stop**
+makes you flip it back before you hand control back:
 
-Write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps). It **resolves this folder
+- **`UserPromptSubmit` "start" hook** — fires the moment a prompt arrives, *before* work begins, and
+  fetches the currently-glowing boxes (`GET /api/attention`) and prints them into your context. You
+  then MUTE the one you're picking up (set it `in_progress`, which turns its glow off) as your first
+  action. Read-only, fire-and-forget with a hard timeout, so it can never add latency or hang the turn.
+- **`Stop` hook** — fires when you pause/hand back, and makes you flip any box you muted back to
+  `waiting`/`blocked`/`done` (a muted box left behind reads as "handled" when it isn't) and apply
+  `attention.md`.
+
+Write `.claude/hooks/tilemon-start.mjs` (Node, no extra deps) — it only *reads* and prints; the muting
+is your first action, not the hook's:
+```js
+#!/usr/bin/env node
+// TileMon start hook (UserPromptSubmit) — READ-ONLY. Shows the agent what's currently glowing
+// (waiting/blocked) so it can MUTE (set in_progress) the box it's picking up as its first action.
+// Writes nothing itself. Fire-and-forget with a hard timeout so it can never slow or hang the turn.
+let s = ''; process.stdin.on('data', c => (s += c)).on('end', async () => {
+  const url = process.env.TILEMON_URL || 'http://localhost:4000';
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 800);   // cap the whole thing — the turn is never blocked
+  try {
+    const r = await fetch(`${url}/api/attention`, { signal: ctl.signal });
+    if (!r.ok) return;                                  // server down / error → show nothing
+    const items = (await r.json()).items || [];
+    if (!items.length) return;                          // nothing glowing → say nothing
+    const list = items.map(i =>
+      `  - [${i.status}] ${i.board} / ${i.name}${i.note ? ' — ' + i.note : ''}  (${i.board} path: ${i.path})`).join('\n');
+    process.stdout.write(
+      `[TileMon] Boxes currently glowing (waiting on the human):\n${list}\n` +
+      `If your work handles one of these, MUTE it as your first action — set it to in_progress via the ` +
+      `tilemon skill (POST /api/status), which turns its glow off while you work. Flag any NEW blocker as ` +
+      `waiting/blocked when you hit it. Don't create a tile just to say you're busy.\n`);
+  } catch { /* server down / timed out → show nothing */ }
+  finally { clearTimeout(timer); process.exit(0); }
+});
+```
+
+Then write `.claude/hooks/tilemon-stop.mjs` in the project (Node, no extra deps). It **resolves this folder
 to its board** (`GET /api/resolve` — folder → board via the `dir` link) so the agent flags the right
 tile and never invents one, then injects the operator's LIVE `attention.md` rules and demands a
 per-rule check. It stays silent (no block) if the folder isn't tracked or the board's unreachable —
@@ -259,19 +321,25 @@ let s = ''; process.stdin.on('data', c => (s += c)).on('end', async () => {
   try { rules = readFileSync(join(homedir(), '.tilemon', 'attention.md'), 'utf8')
     .split('\n').filter(l => l.trim() && !l.trim().startsWith('#')).join('\n').trim(); } catch {}
   const reason = `[TileMon hook] This folder is TileMon board '${board}' — flag THAT board, never create a new one. `
-    + `Before you stop: if you're pausing because you need the human, flag 'waiting' (need a decision/input) or 'blocked' (something's wrong) with a note, via the tilemon skill (POST /api/status to ${url}).`
+    + `You're handing back to the human now, so update your boxes via the tilemon skill (POST /api/status to ${url}): `
+    + `any tile you set to in_progress while working must be flipped back — 'waiting' (needs their input) or 'blocked' (something's wrong) if it still needs them, or 'done' if finished. Never leave a box muted as in_progress when you stop. `
+    + `And if you're pausing because you need them on something not yet on the board, flag it 'waiting'/'blocked' with a note.`
     + (rules ? ` Then check EACH of these attention rules against what you're working on and flag any that match (one by one, don't skip):\n${rules}\n` : ` `)
-    + `If nothing matches, just stop.`;
+    + `If nothing needs them, just stop.`;
   process.stdout.write(JSON.stringify({ decision: 'block', reason }));
   process.exit(0);
 });
 ```
-Then **create or merge** `.claude/settings.json` (Stop hooks take no matcher):
+Then **create or merge** `.claude/settings.json` (neither hook takes a matcher):
 ```json
-{ "hooks": { "Stop": [ { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/tilemon-stop.mjs\"" } ] } ] } }
+{ "hooks": {
+  "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/tilemon-start.mjs\"" } ] } ],
+  "Stop": [ { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/tilemon-stop.mjs\"" } ] } ]
+} }
 ```
-The `stop_hook_active` guard makes it block only once per turn, so it can't loop. TileMon ships none
-of this — it's written into *your* project at setup; the hook only ever triggers a `POST /api/status`.
+The `stop_hook_active` guard makes the Stop hook block only once per turn, so it can't loop; the start
+hook always exits 0 with no output, so it never blocks the prompt. TileMon ships none of this — it's
+written into *your* project at setup; the hooks only ever `POST /api/status` (start) or nudge (stop).
 
 ## Activation note
 
