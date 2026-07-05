@@ -21,12 +21,18 @@ const PAD = 5, HEADER = 22, INSET = 2, TOOLBAR_H = 36, STATUS_H = 22, BAR_MIN_W 
 // Heat = "how loudly this needs your attention". Two "needs-you" levels: `waiting` (needs your
 // input — a decision/answer/approval; glows amber, no pulse) and `blocked` (something's wrong —
 // louder: red + pulse). `in_progress` is deliberately 0 — a working agent doesn't want your
-// attention; it gets a calm "working" dot (a separate, quiet channel). The pulse fires at heat>0.66,
-// so blocked pulses and waiting doesn't — severity, for free, from the existing gradient.
+// attention. (Activity is shown separately by the liveness dot, which is orthogonal to status.)
+// The pulse fires at heat>0.66, so blocked pulses and waiting doesn't — severity, for free, from the existing gradient.
 const STATUS_HEAT = { todo: 0, in_progress: 0, waiting: 0.5, blocked: 1 };
 const STATUSES = ['todo', 'in_progress', 'waiting', 'blocked', 'done'];
 const STAT_LABEL = { todo: 'todo', in_progress: 'in progress', waiting: 'waiting', blocked: 'blocked', done: 'done' };
 const DONE_COLOR = 'rgb(74,92,58)';
+// liveness (ORTHOGONAL to status): a tile is "live" (shows the dot) while its status was seen within
+// this window, whatever that status is — the dot means "an agent is attached and fresh here", not
+// "in progress" (a live `waiting` = an agent's waiting on you right now). Past the window the agent's
+// presumed gone; a stale *in_progress* also dims (stalled). Generous, because the heartbeat is just
+// status writes.
+const LIVE_TTL = 10 * 60 * 1000;
 
 const STYLE = `
 .tlm-board{position:relative;width:100%;height:100%;overflow:hidden;background:var(--tlm-bg,#14120D);touch-action:none}
@@ -35,12 +41,17 @@ const STYLE = `
 .tlm-board.nodrag .tile{transition:background .25s ease}
 .tlm-board .tile:active{cursor:grabbing}
 .tlm-board .tile.target{outline:2px solid var(--tlm-gold,#E8C56A);outline-offset:-2px;box-shadow:inset 0 0 12px rgba(232,197,106,.35)}
-/* "working" = an agent is active here (rolled up). A calm, quiet pulse — NOT heat. Bottom-left,
-   clear of the header and hover bar. This is the low-attention channel; blocked is the loud one. */
-.tlm-board .tile.working::after{content:'';position:absolute;bottom:6px;left:7px;width:7px;height:7px;border-radius:50%;
+/* "live" = an agent touched this within LIVE_TTL (rolled up) — a liveness signal, ORTHOGONAL to
+   status/heat. Any fresh tile shows it: a live waiting tile = an agent's waiting on you right now,
+   a live blocked tile = just hit this. A calm quiet pulse, bottom-left, clear of header + hover bar. */
+.tlm-board .tile.live::after{content:'';position:absolute;bottom:6px;left:7px;width:7px;height:7px;border-radius:50%;
   background:var(--tlm-work,#6E93A6);box-shadow:0 0 5px rgba(110,147,166,.6);animation:tlm-work 2.4s ease-in-out infinite;pointer-events:none;z-index:5}
 @keyframes tlm-work{0%,100%{opacity:.28}50%{opacity:.82}}
-@media (prefers-reduced-motion:reduce){.tlm-board .tile.working::after{animation:none;opacity:.6}}
+@media (prefers-reduced-motion:reduce){.tlm-board .tile.live::after{animation:none;opacity:.6}}
+/* "stalled" = in_progress but no fresh heartbeat — work started then abandoned (agent gone). Dimmed
+   so it reads as "went quiet". Only in_progress recedes like this; a stale waiting/blocked keeps its
+   glow (it still needs you) and merely drops the live dot. */
+.tlm-board .tile.stalled{opacity:.5;filter:grayscale(.55)}
 .tlm-board .tile .hd{position:absolute;top:0;left:0;right:0;height:22px;display:flex;align-items:center;justify-content:space-between;
   padding:0 8px;gap:6px;pointer-events:none}
 .tlm-board .tile .leaf{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -115,7 +126,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function clone(n) {
     const isDone = n.status === 'done';
     if (isDone && !showDone) return null;
-    const out = { id: n.id, name: n.name, weight: num(n.weight, 1), status: n.status, note: n.note, toolbar: n.toolbar,
+    const out = { id: n.id, name: n.name, weight: num(n.weight, 1), status: n.status, note: n.note, seen: n.seen, toolbar: n.toolbar,
       _board: n._board, _path: n._path, _boardLink: n._boardLink, _ro: n._ro, _missing: n._missing, _cycle: n._cycle,
       heat: STATUS_HEAT[n.status] ?? 0, _done: isDone || undefined };
     const kids = n.children;
@@ -184,6 +195,20 @@ export function mount(boardEl, controlsEl, opts = {}) {
     node._working = w && !node._done;
     return node._working;
   }
+  // "live" = an agent touched this recently (any status, seen within LIVE_TTL) somewhere in here —
+  // liveness, orthogonal to status; drives the dot. `_working && !live` = a stalled in_progress.
+  function calcLive(node, now) {
+    let live = node.status && node.status !== 'done' && node.seen && (now - node.seen < LIVE_TTL);
+    for (const c of (node.children || [])) { if (calcLive(c, now)) live = true; }
+    node._live = !!live && !node._done;
+    return node._live;
+  }
+  function paintLiveness() {   // re-evaluate live→stalled over time without a full relayout
+    calcWorking(viewRoot); calcLive(viewRoot, Date.now());
+    for (const k in tileEls) { const n = findByKey(root, k); if (!n) continue;
+      tileEls[k].classList.toggle('live', !!n._live);
+      tileEls[k].classList.toggle('stalled', !!n._working && !n._live && !n._done); }
+  }
 
   const lerp = (a, b, t) => a + (b - a) * t;
   function heatColor(h) { h = Math.max(0, Math.min(1, h));
@@ -204,7 +229,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function renderBoard() {
     const W = boardEl.clientWidth, H = boardEl.clientHeight, shell = isShell();
     const top = shell ? TOOLBAR_H : 0, bot = shell ? STATUS_H : 0;
-    layout(viewRoot, 0, top, W, Math.max(1, H - top - bot), 0, shell); calcHeat(viewRoot); calcWorking(viewRoot);
+    layout(viewRoot, 0, top, W, Math.max(1, H - top - bot), 0, shell); calcHeat(viewRoot); calcWorking(viewRoot); calcLive(viewRoot, Date.now());
     const vis = shell ? [] : [viewRoot];
     (function walk(n) { (n.children || []).forEach(c => { vis.push(c); walk(c); }); })(viewRoot);
     const seen = new Set();
@@ -232,7 +257,8 @@ export function mount(boardEl, controlsEl, opts = {}) {
       el.style.background = node._done ? DONE_COLOR : heatColor(node._heat);
       el.style.color = node._done ? 'var(--tlm-ink,#ECE7DA)' : textColor(node._heat);
       el.classList.toggle('hot', node._heat > 0.66 && !node._done);
-      el.classList.toggle('working', !!node._working);
+      el.classList.toggle('live', !!node._live);                            // agent attached & fresh → liveness dot (any status)
+      el.classList.toggle('stalled', !!node._working && !node._live && !node._done);   // in_progress but gone quiet → abandoned
       el.classList.toggle('done', !!node._done);
       el.classList.toggle('board', isBoard);
       // every tile gets a native tooltip (name + note) so a too-small-to-label tile is still identifiable on hover
@@ -407,6 +433,8 @@ export function mount(boardEl, controlsEl, opts = {}) {
   function render() { renderBoard(); renderChrome(); applyHover(); }
 
   const ro = new ResizeObserver(() => { renderBoard(); applyHover(); }); ro.observe(boardEl);
+  const liveTimer = win.setInterval(paintLiveness, 60000);   // re-evaluate live→stalled as time passes
+  if (liveTimer && typeof liveTimer.unref === 'function') liveTimer.unref();   // don't hold a Node process alive (test/headless)
   boardEl.addEventListener('pointermove', onHover);
   boardEl.addEventListener('pointerleave', () => { hoverKey = null; applyHover(); });
   win.addEventListener('keydown', onKey); win.addEventListener('keyup', onKey);   // modifier flips the resize target
@@ -418,6 +446,6 @@ export function mount(boardEl, controlsEl, opts = {}) {
     setBoards(list) { boards = list || []; renderChrome(); },
     setShowDone(v) { showDone = !!v; rebuild(); render(); },
     getState() { return srcState; },
-    destroy() { ro.disconnect(); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); rm(toolbarEl); rm(statusEl); rm(upEl); for (const k in tileEls) tileEls[k].remove(); tileEls = {}; },
+    destroy() { ro.disconnect(); win.clearInterval(liveTimer); boardEl.removeEventListener('pointermove', onHover); win.removeEventListener('keydown', onKey); win.removeEventListener('keyup', onKey); rm(toolbarEl); rm(statusEl); rm(upEl); for (const k in tileEls) tileEls[k].remove(); tileEls = {}; },
   };
 }

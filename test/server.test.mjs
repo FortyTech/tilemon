@@ -1,7 +1,7 @@
 // Wire-level tests for the structure API: create board, include-existing, move, cycle guards.
 // Boots the real server against a temp boards dir and drives it over HTTP — no browser.
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, realpath, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,6 +66,46 @@ try {
   ok((await api('GET', '/api/resolve?dir=/tmp/elsewhere')).status === 404, 'resolve: untracked folder -> 404');
   await api('PATCH', '/api/board', { slug: 'word-duel', dir: '/tmp/work/wd' });   // backfill an existing board
   ok((await api('GET', '/api/resolve?dir=/tmp/work/wd')).json.board === 'word-duel', 'PATCH sets dir on an existing board; resolve finds it');
+
+  // --- realpath normalisation: symlinked/aliased paths resolve to the same board (the start hook needs this) ---
+  {
+    const realDir = await mkdtemp(join(tmpdir(), 'tilemon-real-'));
+    const linkDir = realDir + '-link';
+    await symlink(realDir, linkDir);
+    const realSub = join(realDir, 'sub'); await mkdir(realSub);
+    await api('POST', '/api/board', { name: 'Linked', slug: 'linked', dir: linkDir });   // register via the SYMLINK
+    const canon = await realpath(realDir);
+    ok((await api('GET', '/api/boards')).json.find(b => b.slug === 'linked').dir === canon, 'store canonicalises a symlinked dir to its real path');
+    ok((await api('GET', `/api/resolve?dir=${encodeURIComponent(linkDir)}`)).json.board === 'linked', 'resolve: symlinked query path matches the canonical board');
+    ok((await api('GET', `/api/resolve?dir=${encodeURIComponent(realSub)}`)).json.board === 'linked', 'resolve: subdir under a symlinked board still matches');
+    await rm(linkDir); await rm(realDir, { recursive: true, force: true });
+  }
+
+  // --- /api/attention: the "what needs me" query — board-scoped, follows includes, blocked first ---
+  {
+    await api('POST', '/api/status', { board: 'attn', path: 'calm', status: 'in_progress', name: 'Calm' });
+    await api('POST', '/api/status', { board: 'attn', path: 'ask', status: 'waiting', name: 'Ask', note: 'which one?' });
+    await api('POST', '/api/status', { board: 'attn', path: 'oops', status: 'blocked', name: 'Oops' });
+    const scoped = (await api('GET', '/api/attention?board=attn')).json.items;
+    ok(scoped.length === 2, '/api/attention?board= returns only that board\'s waiting+blocked (in_progress excluded)');
+    ok(scoped[0].status === 'blocked', '/api/attention sorts blocked before waiting');
+    ok(scoped.some(i => i.path === 'ask' && i.status === 'waiting' && i.note === 'which one?'), '/api/attention carries board+path+note');
+    ok(scoped.every(i => typeof i.area === 'number' && i.area > 0 && i.area <= 1), '/api/attention stamps each item with its area fraction (0,1]');
+    // area ranking: within the same status, a heavier-weighted sibling ranks first
+    await api('POST', '/api/status', { board: 'rank', path: 'small', status: 'waiting', name: 'Small' });
+    await api('POST', '/api/status', { board: 'rank', path: 'big', status: 'waiting', name: 'Big' });
+    await api('POST', '/api/weight', { board: 'rank', path: 'big', weight: 9 });   // big now owns 9/10 of the board
+    const ranked = (await api('GET', '/api/attention?board=rank')).json.items;
+    ok(ranked[0].path === 'big' && ranked[0].area > ranked[1].area, '/api/attention ranks larger-area (more attention) first within a status');
+    // include-following: a parent board surfaces an included board's glowing nodes, addressed by the OWNING board
+    await api('POST', '/api/board', { name: 'Hub', slug: 'hub' });
+    await api('POST', '/api/node', { board: 'hub', kind: 'include', target: 'attn' });
+    const viaHub = (await api('GET', '/api/attention?board=hub')).json.items;
+    ok(viaHub.some(i => i.board === 'attn' && i.path === 'oops'), '/api/attention follows includes, reports owning board+path');
+    ok((await api('GET', '/api/attention?board=nope')).status === 404, '/api/attention 404s an unknown board');
+    // default scope = home board (tilemon), which does NOT include attn → unrelated boards don't leak in
+    ok(!(await api('GET', '/api/attention')).json.items.some(i => i.board === 'attn'), '/api/attention default is home-scoped (unrelated boards excluded)');
+  }
 
   // --- buckets: a group is just an item you add children into ---
   ok((await api('POST', '/api/node', { board: 'tilemon', kind: 'item', name: 'Games' })).status === 200, 'add group item');

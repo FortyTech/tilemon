@@ -169,15 +169,17 @@ assert.deepEqual((w.at(-1)), { k: 'tbar', b: 'shell', path: '', v: false }, 'too
 // attention channels + severity: in_progress = calm dot (no heat); waiting = amber glow, no pulse;
 // blocked = red glow + pulse (louder); todo = no heat.
 const chan = { name: 'Chan', _board: 'chan', _path: '', children: [
-  { id: 'work', name: 'Work', weight: 1, status: 'in_progress', _board: 'chan', _path: 'work' },
-  { id: 'wait', name: 'Wait', weight: 1, status: 'waiting', _board: 'chan', _path: 'wait' },
-  { id: 'stuck', name: 'Stuck', weight: 1, status: 'blocked', _board: 'chan', _path: 'stuck' },
+  { id: 'work', name: 'Work', weight: 1, status: 'in_progress', seen: Date.now(), _board: 'chan', _path: 'work' },   // fresh in_progress → live
+  { id: 'gone', name: 'Gone', weight: 1, status: 'in_progress', seen: 1, _board: 'chan', _path: 'gone' },            // ancient seen → stalled
+  { id: 'wait', name: 'Wait', weight: 1, status: 'waiting', seen: Date.now(), _board: 'chan', _path: 'wait' },       // fresh waiting → live dot too
+  { id: 'stuck', name: 'Stuck', weight: 1, status: 'blocked', seen: 1, _board: 'chan', _path: 'stuck' },             // blocked but no heartbeat → glows, no dot
   { id: 'plain', name: 'Plain', weight: 1, status: 'todo', _board: 'chan', _path: 'plain' },
 ] };
 board.update(chan); raf.forEach(fn => fn());
-assert.ok(tile('work')._cls.has('working') && !tile('work')._cls.has('hot'), 'in_progress = calm working dot, never glows');
-assert.ok(tile('stuck')._cls.has('hot') && !tile('stuck')._cls.has('working'), 'blocked = glows (hot/pulse), no working dot');
-assert.ok(!tile('wait')._cls.has('hot') && !tile('wait')._cls.has('working'), 'waiting glows but does NOT pulse (softer than blocked)');
+assert.ok(tile('work')._cls.has('live') && !tile('work')._cls.has('stalled') && !tile('work')._cls.has('hot'), 'fresh in_progress = live dot, never glows');
+assert.ok(tile('gone')._cls.has('stalled') && !tile('gone')._cls.has('live'), 'in_progress gone stale = stalled (abandoned), no live dot');
+assert.ok(tile('wait')._cls.has('live') && !tile('wait')._cls.has('hot'), 'liveness is ORTHOGONAL to status: a fresh waiting shows the dot too, and still does not pulse');
+assert.ok(tile('stuck')._cls.has('hot') && !tile('stuck')._cls.has('live'), 'stale blocked still glows/pulses but shows no live dot');
 assert.ok(tile('wait').style.background !== tile('plain').style.background, 'waiting carries heat (glows amber); todo does not');
 
 // notes: hovering a tile surfaces its note (the "why" behind the status)

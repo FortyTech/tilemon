@@ -18,8 +18,12 @@ Multi-board swarm loop built and shipping. `npx tilemon` serves a directory of b
 to **upsert**, the board live-updates over SSE, includes render as navigable summary tiles.
 **Structure is API-driven** (`/api/board`, `/api/node {item|include}`, `/api/move` — nothing
 hand-authors JSON), **background mode** (`--daemon`/`--stop`, detached via Node built-ins), and the
-**skill** installs via `npx skills add FortyTech/tilemon`. Published to npm; latest is **`0.3.0`**
-(multi-repo default). One machine = one shared board; **cross-machine forces the hosted/SaaS path
+**skill** installs via `npx skills add FortyTech/tilemon`. Published to npm at **`0.6.0`**; working
+tree is **`0.8.0`** (unpublished): `0.7.0` = renderer keyed by globally-unique `_board::_path`
+(fixes id-collision on drill/hover), always-visible inline notes + tooltip, two-gate setup wizard;
+`0.8.0` = **auto-attach + liveness** (agents claim an `in_progress` tile on start; every status write
+stamps a `seen` heartbeat, so a fresh `in_progress` shows a live "working" dot and a stale one
+dims/greys as abandoned). One machine = one shared board; **cross-machine forces the hosted/SaaS path
 (deferred)**. Jira source stubbed (v2). UI verified in a real browser; logic/API/packaging
 verified headlessly here.
 
@@ -71,6 +75,15 @@ because it *can't* reach weight or structure.
 - `done` (at any level) drops that node and its subtree off the board. The **show-done**
   toggle (`board.setShowDone(true)`) renders them dimmed instead, so `done` is reversible
   from the board — never a one-way trapdoor.
+- **Liveness (`seen`) — orthogonal to status.** Every `/api/status` upsert stamps `seen` (epoch ms).
+  The renderer shows a live dot on *any* fresh tile (any status, own or a fresh descendant, seen
+  `< LIVE_TTL` = 10 min) — the dot means "an agent is attached and fresh here", **not** "in progress":
+  a live `waiting` reads as "an agent's waiting on you *right now*". Heat (how much it needs you) and
+  the dot (is an agent live on it) are two independent axes. Separately, a *stale* `in_progress`
+  renders **`stalled`** (dimmed + greyscaled) — started-then-abandoned work; a stale `waiting`/`blocked`
+  keeps its glow (it still needs you) and merely loses the dot. Agents keep tiles live by re-POSTing
+  as they work, and resolve to `done`/`waiting`/`blocked` before stopping. Heartbeat is write-driven
+  only (no server heartbeat/reaper) — a generous TTL absorbs the gaps; SessionEnd reaping deferred.
 - Weight is a node's share vs. its siblings; resizing one node squeezes the others
   proportionally. New nodes should be born small.
 - **Multi-board:** each board is `<slug>.json` in the boards dir, with a board-level
