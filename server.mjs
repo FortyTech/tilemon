@@ -5,7 +5,10 @@
 //   npx tilemon --daemon                 # the usual setup: one detached, always-on machine-wide board
 //   npx tilemon --project                # scope the board to THIS repo instead (serves ./.tilemon)
 //   npx tilemon ./boards                 # or point it at any explicit folder
+//   npx tilemon flag <board> <path> <status> [note] [--name "..."]   # a VERIFIED status write (exits non-zero if it didn't land)
+//   npx tilemon attention [board]        # print what's glowing (waiting/blocked); verified read, board defaults to home
 //   npx tilemon --stop                   # stop the backgrounded server
+//   (flag/attention auto-start the default local server if it isn't running — set TILEMON_NO_AUTOSTART=1 to disable)
 //   PORT=4000 TILEMON_TOKEN=secret node server.mjs
 //
 // A boards directory holds one <slug>.json per board:
@@ -46,14 +49,16 @@ import { homedir } from 'node:os';
 const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
+
+const SUBCMD = ['flag', 'attention'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
 // boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
-// else the default ~/.tilemon (one machine-wide board every local repo reports into, which is what
-// a cross-project tool wants). A hidden folder of <slug>.json boards.
-const BOARDS = argv.find(a => !a.startsWith('-')) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
+// else the default ~/.tilemon. In subcommand mode the positionals belong to the command, not the dir.
+const BOARDS = (!SUBCMD && argv.find(a => !a.startsWith('-'))) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
 const PORT   = Number(process.env.PORT) || 4000;
 const TOKEN  = process.env.TILEMON_TOKEN || null;
 const DASH   = join(__dir, 'dashboard.html');
 const PIDFILE = join(BOARDS, '.server.pid');
+const CLIENT_BASE = process.env.TILEMON_URL || ('http://localhost:' + PORT);   // where client subcommands send requests
 
 // ---- background mode (zero-dep, cross-platform via Node's own detached spawn) ----
 // Is something already listening on PORT? (a quick TCP probe; no HTTP needed)
@@ -63,6 +68,62 @@ const portUp = () => new Promise(r => {
   s.once('error', () => r(false));
   s.setTimeout(400, () => { s.destroy(); r(false); });
 });
+// Spawn a DETACHED server that outlives this process; resolve true once it accepts connections.
+async function startDaemon() {
+  if (await portUp()) return true;
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), BOARDS],
+    { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
+  child.unref();
+  for (let i = 0; i < 40 && !(await portUp()); i++) await new Promise(r => setTimeout(r, 150));
+  return portUp();
+}
+// Auto-start for client subcommands: only the pure DEFAULT local server (TILEMON_URL unset) and only
+// if not opted out — never try to boot a server for a configured/remote TILEMON_URL. Announced, not silent.
+async function ensureUpForClient() {
+  if (process.env.TILEMON_URL || process.env.TILEMON_NO_AUTOSTART) return;   // configured target / opted out → leave it
+  if (await portUp()) return;
+  process.stderr.write("TileMon wasn't running — starting it…\n");
+  await startDaemon();
+}
+
+// ---- client subcommands: talk to a running board over HTTP, VERIFIED (never a silent no-op) ----
+if (SUBCMD) {
+  const cmdArgs = argv.slice(1);
+  const headers = { 'content-type': 'application/json' };
+  if (TOKEN) headers.authorization = 'Bearer ' + TOKEN;
+  await ensureUpForClient();
+
+  if (SUBCMD === 'flag') {
+    const [board, path, status = 'blocked', ...rest] = cmdArgs;
+    let name; const noteWords = [];
+    for (let i = 0; i < rest.length; i++) { if (rest[i] === '--name') name = rest[++i]; else noteWords.push(rest[i]); }
+    const note = noteWords.join(' ') || undefined;
+    if (!board || !path) { console.error('usage: tilemon flag <board> <path> <status> [note] [--name "Plain name"]'); process.exit(2); }
+    let res;
+    try { res = await fetch(`${CLIENT_BASE}/api/status`, { method: 'POST', headers, body: JSON.stringify({ board, path, status, note, name }) }); }
+    catch (e) { console.error(`✗ TileMon unreachable at ${CLIENT_BASE} — ${e.message}`); process.exit(1); }
+    const out = await res.json().catch(() => ({}));
+    if (res.ok && out.ok) { console.log(`✓ ${board}/${path} → ${status}${note ? ` ("${note}")` : ''}  @ ${CLIENT_BASE}`); process.exit(0); }
+    console.error(`✗ write did NOT land (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
+    process.exit(1);
+  }
+
+  // `tilemon attention [board]` — verified READ of what's glowing; board defaults to the home board
+  const board = cmdArgs.find(a => !a.startsWith('-'));
+  const q = board ? `?board=${encodeURIComponent(board)}` : '';
+  let res;
+  try { res = await fetch(`${CLIENT_BASE}/api/attention${q}`, { headers }); }
+  catch (e) { console.error(`✗ TileMon unreachable at ${CLIENT_BASE} — ${e.message}`); process.exit(1); }
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) { console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`); process.exit(1); }
+  const items = out.items || [];
+  const where = out.board || board || 'tilemon';
+  if (!items.length) { console.log(`(nothing glowing on '${where}')`); process.exit(0); }
+  console.log(`${items.length} glowing on '${where}':`);
+  for (const i of items) console.log(`  [${i.status}] ${i.board} / ${i.name}${i.note ? ' — ' + i.note : ''}  (path: ${i.path})`);
+  process.exit(0);
+}
+
 // `--stop`: terminate the backgrounded server recorded in the pidfile
 if (hasFlag('--stop')) {
   try { const pid = Number(await readFile(PIDFILE, 'utf8')); process.kill(pid); console.log(`TileMon stopped (pid ${pid})`); }
@@ -72,14 +133,8 @@ if (hasFlag('--stop')) {
 // `--daemon`/`-d`: spawn a DETACHED server that outlives this process — and any agent that launched it
 if (hasFlag('--daemon') || hasFlag('-d')) {
   if (await portUp()) { console.log(`TileMon already running at http://localhost:${PORT}`); process.exit(0); }
-  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), BOARDS],
-    { detached: true, stdio: 'ignore', windowsHide: true, env: process.env });
-  child.unref();
-  for (let i = 0; i < 40 && !(await portUp()); i++) await new Promise(r => setTimeout(r, 150));
-  if (!(await portUp())) { console.log('TileMon did not come up — run `npx tilemon` in the foreground to see the error.'); process.exit(1); }
-  console.log(`TileMon started in the background at http://localhost:${PORT}`);
-  console.log('  stop it with:  npx tilemon --stop');
-  process.exit(0);
+  if (await startDaemon()) { console.log(`TileMon started in the background at http://localhost:${PORT}`); console.log('  stop it with:  npx tilemon --stop'); process.exit(0); }
+  console.log('TileMon did not come up — run `npx tilemon` in the foreground to see the error.'); process.exit(1);
 }
 
 const VALID_STATUS = new Set(['todo', 'in_progress', 'waiting', 'blocked', 'done']);

@@ -135,6 +135,9 @@ npm run demo                          # serve ./examples/boards  (http://localho
 npm start                             # serve ~/.tilemon (default machine-wide board; --project for ./.tilemon)
 TILEMON_TOKEN=secret node server.mjs              # auth on writes (serves ~/.tilemon by default)
 node examples/agent.mjs webapp api.refactor-auth  # toy agent walks a job through the lifecycle
+tilemon flag <board> <path> <status> "<note>" --name "..."  # VERIFIED status write (exits non-zero if it didn't land)
+tilemon attention [board]             # VERIFIED read — print what's glowing (board defaults to home)
+                                      # ↑ flag/attention auto-start the default local server if down (TILEMON_NO_AUTOSTART=1 to disable)
 npm test                              # headless; no browser required
 ```
 
