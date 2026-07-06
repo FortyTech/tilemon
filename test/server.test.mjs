@@ -107,6 +107,26 @@ try {
     ok(!(await api('GET', '/api/attention')).json.items.some(i => i.board === 'attn'), '/api/attention default is home-scoped (unrelated boards excluded)');
   }
 
+  // --- client subcommands (flag/attention): VERIFIED — land/read on success, exit non-zero on failure ---
+  {
+    // TILEMON_NO_AUTOSTART + explicit TILEMON_URL keep these from spawning a stray daemon during tests
+    const runCmd = (args, env) => new Promise(resolve => {
+      const c = spawn('node', [SERVER, ...args], { env: { ...process.env, TILEMON_NO_AUTOSTART: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = ''; c.stdout.on('data', d => out += d);
+      c.on('close', code => resolve({ code, out }));
+    });
+    // flag — verified write
+    const w = await runCmd(['flag', 'flagboard', 'task', 'blocked', 'need input', '--name', 'Flag Task'], { TILEMON_URL: BASE });
+    ok(w.code === 0, 'tilemon flag exits 0 on a successful write');
+    const landed = (await api('GET', '/api/attention?board=flagboard')).json.items;
+    ok(landed.some(i => i.path === 'task' && i.status === 'blocked' && i.name === 'Flag Task'), 'tilemon flag actually landed the status (board+path+name)');
+    ok((await runCmd(['flag', 'flagboard', 'task', 'blocked'], { TILEMON_URL: 'http://localhost:1' })).code !== 0, 'tilemon flag exits NON-ZERO when unreachable — no silent no-op');
+    // attention — verified read
+    const r = await runCmd(['attention', 'flagboard'], { TILEMON_URL: BASE });
+    ok(r.code === 0 && /Flag Task/.test(r.out), 'tilemon attention reads back the glowing box');
+    ok((await runCmd(['attention', 'flagboard'], { TILEMON_URL: 'http://localhost:1' })).code !== 0, 'tilemon attention exits NON-ZERO when unreachable');
+  }
+
   // --- buckets: a group is just an item you add children into ---
   ok((await api('POST', '/api/node', { board: 'tilemon', kind: 'item', name: 'Games' })).status === 200, 'add group item');
 

@@ -27,30 +27,36 @@ scheduled ones — often at the same time. You are just one of those clients. So
 
 ## Reporting status (the core — this is 95% of it)
 
-1. **Find the board.** Use `$TILEMON_URL`, else `http://localhost:4000`. If nothing answers,
-   start it detached with `npx tilemon --daemon` (it outlives your session; `--stop` kills it),
-   wait for it to come up, then proceed. **Never read TileMon's own source to work out how to run
-   it** — this skill is the complete manual; treat the server as a black box behind the API.
-   (TileMon may itself be one of the projects on the board — that's fine; just don't crack open
-   its implementation to operate it.)
+1. **Find the board.** The `tilemon` subcommands (`flag`, `attention`) talk to `$TILEMON_URL` else
+   `http://localhost:4000` and **auto-start the local server if it's down** — so you usually don't
+   need to start anything; just run the command. (If you're hand-calling the HTTP API instead and
+   nothing answers, `npx tilemon --daemon` starts it detached; `--stop` kills it.) **Never read
+   TileMon's own source to work out how to run it** — this skill is the complete manual; treat the
+   server as a black box behind the API. (TileMon may itself be a project on the board — fine; just
+   don't crack open its implementation to operate it.)
+   To see **what's currently glowing** (waiting on the human), read it — don't guess: `tilemon
+   attention [board]` (verified; board defaults to the portfolio home), or `GET /api/attention?board=`.
 2. **Address your work.** Find your `board` *with certainty* — don't guess from the folder name and
    never invent a new board: resolve it from the folder you're working in —
    `GET /api/resolve?dir=<abs cwd>` → `{board}` (matches the board whose `dir` is the longest prefix
    of your path). If it 404s, this folder isn't tracked — leave it, don't create one. `path` = a
    stable, dotted id for your task within that board, e.g. `api.refactor-auth`. **Reuse the same
    board + path across a task's whole life** so a reconnecting agent lands back on the same tile.
-3. **POST it.** `status` ∈ `todo | in_progress | waiting | blocked | done`. Include a `note` — your
-   message (what you're doing / what you need); it shows inline on the tile (and in its tooltip). Also
-   pass a **`name`** in **plain language a human reads at a glance** — "Uncommitted changes", "Deploy
-   to prod" — **never a cryptic code or abbreviation** ("vcs", "wip"); the human is looking at this,
-   not you.
+3. **Write it — use the verified command, not a hand-rolled curl.** `status` ∈
+   `todo | in_progress | waiting | blocked | done`. Include a `note` (what you're doing / what you
+   need — shows inline + in the tooltip) and a **`name`** in **plain language a human reads at a
+   glance** — "Uncommitted changes", "Deploy to prod" — **never a cryptic code** ("vcs", "wip").
    ```bash
-   curl -s -X POST "$TILEMON_URL/api/status" \
-     -H 'content-type: application/json' \
-     -d '{"board":"webapp","path":"api.refactor-auth","status":"waiting","name":"Refactor auth","note":"which auth provider do you want — Clerk or Auth0?"}'
+   tilemon flag <board> <path> <status> "<note>" --name "Plain name"
+   tilemon flag webapp api.refactor-auth waiting "which auth provider — Clerk or Auth0?" --name "Refactor auth"
    ```
-   Add `-H "Authorization: Bearer $TILEMON_TOKEN"` if the server requires a token.
-   From inside the tilemon repo: `node examples/flag.mjs <board> <dotted.id.path> <status> "<note>"`.
+   **Prefer `tilemon flag` (or `npx tilemon flag`) over raw curl.** It uses the right default port
+   (`$TILEMON_URL` else `:4000`), checks the response, and **exits non-zero and prints loudly if the
+   write did not land** — so a wrong port or a down server can't silently swallow your update (a real
+   failure mode: a hand-rolled `curl -s` to a phantom port returns nothing and looks like success).
+   It also handles `$TILEMON_TOKEN` automatically. If you *must* use curl (`POST $TILEMON_URL/api/status`
+   with the same JSON, `Authorization: Bearer $TILEMON_TOKEN` if set), then **confirm the response is
+   `{"ok":true}`** — do not trust that it worked; a status write that isn't verified isn't done.
 4. **When to fire:** think of `in_progress` as a **mute**, not a new light. A box glows because it
    needs the human (`waiting`/`blocked`); when you pick that work up, set it `in_progress` and the glow
    goes **off** ("I'm on it, look away"). So the trigger is: **you start handling a glowing box → mute
