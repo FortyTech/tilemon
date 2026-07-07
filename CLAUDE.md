@@ -18,12 +18,15 @@ Multi-board swarm loop built and shipping. `npx tilemon` serves a directory of b
 to **upsert**, the board live-updates over SSE, includes render as navigable summary tiles.
 **Structure is API-driven** (`/api/board`, `/api/node {item|include}`, `/api/move` — nothing
 hand-authors JSON), **background mode** (`--daemon`/`--stop`, detached via Node built-ins), and the
-**skill** installs via `npx skills add FortyTech/tilemon`. Published to npm at **`0.6.0`**; working
-tree is **`0.8.0`** (unpublished): `0.7.0` = renderer keyed by globally-unique `_board::_path`
-(fixes id-collision on drill/hover), always-visible inline notes + tooltip, two-gate setup wizard;
-`0.8.0` = **auto-attach + liveness** (agents claim an `in_progress` tile on start; every status write
-stamps a `seen` heartbeat, so a fresh `in_progress` shows a live "working" dot and a stale one
-dims/greys as abandoned). One machine = one shared board; **cross-machine forces the hosted/SaaS path
+**skill** installs via `npx skills add FortyTech/tilemon`. Working tree is **`0.11.0`**: `0.7.0` =
+renderer keyed by globally-unique `_board::_path` (fixes id-collision on drill/hover), always-visible
+inline notes + tooltip, two-gate setup wizard; `0.8.0` = **auto-attach + liveness** (agents claim an
+`in_progress` tile on start; every status write stamps a `seen` heartbeat, so a fresh `in_progress`
+shows a live "working" dot and a stale one dims/greys as abandoned); `0.11.0` = **full client-CLI
+coverage** — `resolve`/`boards`/`state`/`add-board`/`add-item`/`include` added as verified subcommands
+(exit non-zero on failure) alongside `flag`/`attention`, so nothing hand-rolls curl, plus the
+**skill restructured** into a lean hot-path `SKILL.md` (report status) + `references/setup.md`
+(bootstrap) with command-first framing throughout. One machine = one shared board; **cross-machine forces the hosted/SaaS path
 (deferred)**. Jira source stubbed (v2). UI verified in a real browser; logic/API/packaging
 verified headlessly here.
 
@@ -58,10 +61,18 @@ never let `board.js` reach for `fetch`/storage directly.
 
 ## Capability split (the safety story)
 
-`/api/status` is the agent surface — it can only set a **node's status** (any level).
-`/api/weight` is the human surface — weight only. Neither can do the other's job; that's
-enforced by route, not policy. One board-wide `TILEMON_TOKEN` is safe to hand an agent
-because it *can't* reach weight or structure.
+The write surface is split **by route**, and each route does exactly one job: `POST /api/status`
+sets a node's status/note (any level) and nothing else; `POST /api/weight` sets weight and nothing
+else; structure lives on its own routes (`/api/board`, `/api/node`, `/api/move`). No route can be
+made to do another's job.
+
+**But there is only one credential, and it is not scoped.** `TILEMON_TOKEN` is a single board-wide
+write secret: if it's set, it authorises *every* write route — status, weight, and structure alike
+(see `authed`, server.mjs); if it's unset (the default local setup), writes are open. So handing the
+token to an agent grants **all** writes, not just flagging — it can reshape weights and structure too.
+The routine-vs-setup separation an agent actually observes is enforced by **what its skill docs expose**
+(routine agents see only `flag`/`attention`/`resolve`), not by the token. A genuinely status-only
+credential would be new work (per-capability tokens).
 
 ## Data conventions
 

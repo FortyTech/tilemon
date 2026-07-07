@@ -50,7 +50,7 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
 
-const SUBCMD = ['flag', 'attention'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
+const SUBCMD = ['flag', 'attention', 'resolve', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
 // boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
 // else the default ~/.tilemon. In subcommand mode the positionals belong to the command, not the dir.
 const BOARDS = (!SUBCMD && argv.find(a => !a.startsWith('-'))) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
@@ -93,6 +93,32 @@ if (SUBCMD) {
   if (TOKEN) headers.authorization = 'Bearer ' + TOKEN;
   await ensureUpForClient();
 
+  // Verified GET/POST helpers for the read + structure subcommands (flag keeps its own inline form).
+  // Every subcommand exits non-zero on failure so a script can never mistake a no-op for success.
+  const apiGet = async (path) => {
+    let res;
+    try { res = await fetch(`${CLIENT_BASE}${path}`, { headers }); }
+    catch (e) { console.error(`✗ TileMon unreachable at ${CLIENT_BASE} — ${e.message}`); process.exit(1); }
+    return { res, out: await res.json().catch(() => ({})) };
+  };
+  const apiPost = async (path, payload) => {
+    let res;
+    try { res = await fetch(`${CLIENT_BASE}${path}`, { method: 'POST', headers, body: JSON.stringify(payload) }); }
+    catch (e) { console.error(`✗ TileMon unreachable at ${CLIENT_BASE} — ${e.message}`); process.exit(1); }
+    return { res, out: await res.json().catch(() => ({})) };
+  };
+  // pull `--key value` options out; leave the rest as positionals
+  const parseOpts = (args) => {
+    const opts = {}, pos = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i].startsWith('--')) opts[args[i].slice(2)] = args[++i];
+      else pos.push(args[i]);
+    }
+    return { opts, pos };
+  };
+
+  // ---- routine agent commands: flag (write status), attention + resolve (reads) ----
+
   if (SUBCMD === 'flag') {
     const [board, path, status = 'blocked', ...rest] = cmdArgs;
     let name; const noteWords = [];
@@ -109,19 +135,87 @@ if (SUBCMD) {
   }
 
   // `tilemon attention [board]` — verified READ of what's glowing; board defaults to the home board
-  const board = cmdArgs.find(a => !a.startsWith('-'));
-  const q = board ? `?board=${encodeURIComponent(board)}` : '';
-  let res;
-  try { res = await fetch(`${CLIENT_BASE}/api/attention${q}`, { headers }); }
-  catch (e) { console.error(`✗ TileMon unreachable at ${CLIENT_BASE} — ${e.message}`); process.exit(1); }
-  const out = await res.json().catch(() => ({}));
-  if (!res.ok) { console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`); process.exit(1); }
-  const items = out.items || [];
-  const where = out.board || board || 'tilemon';
-  if (!items.length) { console.log(`(nothing glowing on '${where}')`); process.exit(0); }
-  console.log(`${items.length} glowing on '${where}':`);
-  for (const i of items) console.log(`  [${i.status}] ${i.board} / ${i.name}${i.note ? ' — ' + i.note : ''}  (path: ${i.path})`);
-  process.exit(0);
+  if (SUBCMD === 'attention') {
+    const board = cmdArgs.find(a => !a.startsWith('-'));
+    const q = board ? `?board=${encodeURIComponent(board)}` : '';
+    const { res, out } = await apiGet(`/api/attention${q}`);
+    if (!res.ok) { console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`); process.exit(1); }
+    const items = out.items || [];
+    const where = out.board || board || 'tilemon';
+    if (!items.length) { console.log(`(nothing glowing on '${where}')`); process.exit(0); }
+    console.log(`${items.length} glowing on '${where}':`);
+    for (const i of items) console.log(`  [${i.status}] ${i.board} / ${i.name}${i.note ? ' — ' + i.note : ''}  (path: ${i.path})`);
+    process.exit(0);
+  }
+
+  // `tilemon resolve [dir]` — which board owns this folder? (default: cwd). Prints just the slug, for capture.
+  if (SUBCMD === 'resolve') {
+    const dir = cmdArgs.find(a => !a.startsWith('-')) || process.cwd();
+    const { res, out } = await apiGet(`/api/resolve?dir=${encodeURIComponent(dir)}`);
+    if (res.ok && out.board) { console.log(out.board); process.exit(0); }
+    if (res.status === 404) { console.error(`✗ no board maps to ${dir} — this folder isn't tracked (leave it; don't invent one)`); process.exit(4); }
+    console.error(`✗ resolve failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
+    process.exit(1);
+  }
+
+  // ---- setup-only commands (bootstrapping / reconciling a board; routine reporting never needs these) ----
+
+  // `tilemon boards` — list every board (slug, name, dir).
+  if (SUBCMD === 'boards') {
+    const { res, out } = await apiGet('/api/boards');
+    if (!res.ok) { console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`); process.exit(1); }
+    const boards = Array.isArray(out) ? out : [];
+    if (!boards.length) { console.log('(no boards yet)'); process.exit(0); }
+    for (const b of boards) console.log(`  ${b.slug}\t${b.name || ''}${b.dir ? '\t(' + b.dir + ')' : ''}`);
+    process.exit(0);
+  }
+
+  // `tilemon state <board>` — dump a board's resolved tree as JSON (reconcile before adding structure).
+  if (SUBCMD === 'state') {
+    const slug = cmdArgs.find(a => !a.startsWith('-'));
+    if (!slug) { console.error('usage: tilemon state <board>'); process.exit(2); }
+    const { res, out } = await apiGet(`/api/state?board=${encodeURIComponent(slug)}`);
+    if (res.ok) { console.log(JSON.stringify(out, null, 2)); process.exit(0); }
+    console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
+    process.exit(res.status === 404 ? 4 : 1);
+  }
+
+  // `tilemon add-board <name> [--slug s] [--dir /abs/path]` — create a bare board; prints its slug.
+  if (SUBCMD === 'add-board') {
+    const { opts, pos } = parseOpts(cmdArgs);
+    const name = pos.join(' ').trim();
+    if (!name) { console.error('usage: tilemon add-board <name> [--slug <slug>] [--dir <abs path>]'); process.exit(2); }
+    const payload = { name };
+    if (opts.slug) payload.slug = opts.slug;
+    if (opts.dir) payload.dir = opts.dir;
+    const { res, out } = await apiPost('/api/board', payload);
+    if (res.ok && out.ok) { console.log(`✓ created board '${out.slug}'${opts.dir ? ` → ${opts.dir}` : ''}  @ ${CLIENT_BASE}`); process.exit(0); }
+    console.error(`✗ add-board did NOT land (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
+    process.exit(1);
+  }
+
+  // `tilemon add-item <board> <name> [--path <parent>]` — add a plain item/bucket (root, or under --path).
+  if (SUBCMD === 'add-item') {
+    const { opts, pos } = parseOpts(cmdArgs);
+    const [slug, ...nameParts] = pos;
+    const name = nameParts.join(' ').trim();
+    if (!slug || !name) { console.error('usage: tilemon add-item <board> <name> [--path <parent>]'); process.exit(2); }
+    const { res, out } = await apiPost('/api/node', { board: slug, path: opts.path || '', kind: 'item', name });
+    if (res.ok && out.ok) { console.log(`✓ added item "${name}" to '${slug}'${opts.path ? '.' + opts.path : ''}  @ ${CLIENT_BASE}`); process.exit(0); }
+    console.error(`✗ add-item did NOT land (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
+    process.exit(1);
+  }
+
+  // `tilemon include <board> <targetBoard> [--path <parent>]` — include an EXISTING board as a summary tile.
+  if (SUBCMD === 'include') {
+    const { opts, pos } = parseOpts(cmdArgs);
+    const [slug, target] = pos;
+    if (!slug || !target) { console.error('usage: tilemon include <board> <targetBoard> [--path <parent>]'); process.exit(2); }
+    const { res, out } = await apiPost('/api/node', { board: slug, path: opts.path || '', kind: 'include', target });
+    if (res.ok && out.ok) { console.log(`✓ included '${target}' under '${slug}'${opts.path ? '.' + opts.path : ''}  @ ${CLIENT_BASE}`); process.exit(0); }
+    console.error(`✗ include did NOT land (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
+    process.exit(1);
+  }
 }
 
 // `--stop`: terminate the backgrounded server recorded in the pidfile
