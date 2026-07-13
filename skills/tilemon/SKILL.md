@@ -16,7 +16,7 @@ noise defeats the tool.
 
 **Setting up or bootstrapping a board?** That's a different, rarer job (structure is the human's,
 built through a propose-first wizard). Don't do it from memory — read **`references/setup.md`**, which
-has the two-gate wizard, the structure API, the bucket/addressing convention, and the hook install.
+has the two-step wizard, the structure API, the bucket/addressing convention, and the hook install.
 Everything below is the routine hot path: reporting your own status.
 
 **It is a shared, long-running board — not this session's state.** The board runs as its own server
@@ -48,7 +48,7 @@ at once. You are just one client. So:
    **Deriving a stable `path` — pick a deterministic id so two agents on the same task collide on the
    *same* tile rather than making two.** `path` is a dotted id within the board (no dots inside a
    segment). Derive it from something both agents would independently choose:
-   - **Tracked git/VCS state** (uncommitted, unpushed) → use `vcs`. This is the shared convention;
+   - **Tracked git state** (uncommitted, unpushed) → use `git`. This is the shared convention;
      always the same, so the repo's git-state tile never duplicates.
    - **A ticket / issue** → the id, lowercased, e.g. `scrum-119` or `fo-42`.
    - **A code task** → the primary area it touches, e.g. `api.refactor-auth` (mirror the file/module
@@ -57,7 +57,7 @@ at once. You are just one client. So:
 3. **Write it — use the verified command, not a hand-rolled curl.** `status` ∈
    `todo | in_progress | waiting | blocked | done`. Include a `note` (what you're doing / what you
    need — shows inline + in the tooltip) and a **`name`** in **plain language a human reads at a
-   glance** — "Uncommitted changes", "Deploy to prod" — **never a cryptic code** ("vcs", "wip"). (The
+   glance** — "Uncommitted changes", "Deploy to prod" — **never a cryptic code** ("wip", "tmp"). (The
    *name* is human-facing prose; the *path* is the stable id from step 2 — they're different fields.)
    ```bash
    tilemon flag <board> <path> <status> "<note>" --name "Plain name"

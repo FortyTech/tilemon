@@ -1,6 +1,6 @@
 {
   "name": "tilemon",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "A priority board where importance is space. Zero-sum treemap over JSON boards; agents flag status, you own the weights.",
   "type": "module",
   "bin": {
@@ -9,13 +9,14 @@
   "scripts": {
     "start": "node server.mjs",
     "demo": "node server.mjs ./examples/boards",
-    "test": "node test/board.test.mjs && node test/server.test.mjs"
+    "test": "node test/board.test.mjs && node test/server.test.mjs && node test/reconcile.test.mjs"
   },
   "engines": {
     "node": ">=18"
   },
   "files": [
     "server.mjs",
+    "reconcile.mjs",
     "dashboard.html",
     "board.js",
     "examples",
