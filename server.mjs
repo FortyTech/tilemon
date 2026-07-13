@@ -50,7 +50,7 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
 
-const SUBCMD = ['flag', 'attention', 'resolve', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
+const SUBCMD = ['flag', 'attention', 'resolve', 'reconcile', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
 // boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
 // else the default ~/.tilemon. In subcommand mode the positionals belong to the command, not the dir.
 const BOARDS = (!SUBCMD && argv.find(a => !a.startsWith('-'))) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
@@ -156,6 +156,15 @@ if (SUBCMD) {
     if (res.status === 404) { console.error(`✗ no board maps to ${dir} — this folder isn't tracked (leave it; don't invent one)`); process.exit(4); }
     console.error(`✗ resolve failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`);
     process.exit(1);
+  }
+
+  // `tilemon reconcile` — run the attention.md executor for this folder's board (Stop-hook or manual).
+  // Reads the hook JSON on stdin, delegates to a sealed tool-less `claude -p`, posts the result. All
+  // the logic lives in reconcile.mjs so the core server stays dumb; imported lazily so it costs nothing
+  // for every other command. Prints one line only when a tile actually changed.
+  if (SUBCMD === 'reconcile') {
+    const { reconcile } = await import('./reconcile.mjs');
+    process.exit(await reconcile({ BOARDS, CLIENT_BASE, TOKEN, argv: cmdArgs }));
   }
 
   // ---- setup-only commands (bootstrapping / reconciling a board; routine reporting never needs these) ----
@@ -669,29 +678,36 @@ const server = http.createServer(async (req, res) => {
 });
 
 // operator-side attention rules — a starter template dropped next to the boards on first run.
-const ATTENTION_TEMPLATE = `# attention.md — your TileMon attention rules
+const ATTENTION_TEMPLATE = `# attention.md — your TileMon board, organised BY STATUS
 #
-# Free text, entirely yours. Agents working in a place read this and push status so the things that
-# need YOU glow. What counts as "needs attention" is your call — describe it however you like; the
-# agent applies judgment and reports via the board. Rules are a personal lens, evaluated where the
-# work happens and pushed to the board (POST /api/status is the whole interface — generate those
-# pushes however suits you). Global rules apply everywhere; add "# board: <slug>" or
-# "# node: <board>.<path>" to target specifics.
+# Free text, entirely yours. The reconciler (\`tilemon reconcile\`) reads this whole file and sets each
+# tile's status so the things that need YOU glow. One heading per status; the bullets under it are what
+# belongs in that status, and the heading DEFINES what the status means — the bar the reconciler must
+# meet before using it. Global by default; add "# board: <slug>" or "# node: <board>.<path>" sections
+# to override for a specific board or tile.
+#
+# Severity, loudest first: blocked > waiting > in_progress > todo > done.
 
-# Two "needs-you" levels: waiting = needs my input/decision (amber); blocked = something is wrong,
-# louder (red). (Agents already auto-flag when they're stuck on you — these add ambient triggers.)
+## blocked — something is WRONG: an obstacle the agent cannot pass on its own. (red, loudest)
+# - Failing tests or a red CI run.
+# - A vulnerable dependency or other obvious security problem.
 
-# --- global --- (examples — replace with your own)
-# - Uncommitted or committed-but-unpushed changes in a repo -> waiting (nag me until it's clean).
-# - An open PR awaiting my review, or my PR with requested changes -> waiting.
-# - Failing tests / a red CI run -> blocked.
-# - Any obvious security issue (e.g. a vulnerable dependency) -> blocked.
+## waiting — needs MY input, decision, review, or confirmation; nothing is broken. (amber)
+# - Committed-but-unpushed work parked a while, or a dirty tree left sitting (not every WIP edit).
+# - An open PR awaiting my review, or one of mine with requested changes.
+# - Anything where an agent has asked me to decide/confirm and can't proceed without me.
 
-# --- board: example-project ---
-# - A client message unanswered for more than a day or two -> waiting.
+## in_progress — an agent is actively working this right now; no attention needed. (a mute)
 
-# --- node: example-project.billing ---
-# - Billing errors in the logs -> blocked.
+## todo — identified but not started.
+
+## done — finished AND confirmed by me, OR independently verifiable as complete (merged + deployed,
+#         CI green). Do NOT mark done just because something was built, is live, or "should work":
+#         if it is awaiting my check, it stays \`waiting\`. A false 'done' makes a pending item vanish.
+
+# --- board: example-project ---   (scope extra rules to one board)
+# ## waiting
+# - A client message unanswered for more than a day or two.
 `;
 
 await mkdir(BOARDS, { recursive: true }).catch(() => {});
