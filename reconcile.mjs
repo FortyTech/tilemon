@@ -26,6 +26,7 @@ export async function reconcile({ BOARDS, CLIENT_BASE, TOKEN, argv = [] }) {
   const dry = !!(opts['dry-run'] || opts.dry);
   const model = opts.model || process.env.TILEMON_RECONCILE_MODEL || 'claude-haiku-4-5-20251001';
   const timeout = Number(process.env.TILEMON_RECONCILE_TIMEOUT_MS || 90000);
+  const contextChars = Number(process.env.TILEMON_RECONCILE_CONTEXT_CHARS || 16000);
 
   const input = readStdinJson();                 // the Stop-hook payload, when piped
   if (input.stop_hook_active === true) return 0;  // already nudged this turn
@@ -44,7 +45,7 @@ export async function reconcile({ BOARDS, CLIENT_BASE, TOKEN, argv = [] }) {
 
   const rules = readFileSafe(join(BOARDS, 'attention.md'));
   const facts = gatherFacts(cwd);
-  const convo = transcriptTail(input.transcript_path, 4000);
+  const convo = transcriptTail(input.transcript_path, contextChars);
   const prompt = buildPrompt(board, rules, facts, convo);
 
   const res = spawnSync('claude', ['-p', '--model', model], {
@@ -137,6 +138,14 @@ function transcriptTail(path, maxChars) {
     if (typeof msg.content === 'string') text = msg.content;
     else if (Array.isArray(msg.content)) text = msg.content.filter(b => b && b.type === 'text').map(b => b.text).join(' ');
     text = text.trim();
+    // Cap each message so the window spans MORE turns: keep the head + tail, drop the middle (the
+    // "lost in the middle" effect). Weighted by role — an ASSISTANT message ends with the hand-off/ask
+    // (keep the tail); a USER message leads with the instruction and often trails into a pasted blob
+    // (keep the head). Small opposite end kept in case (assistant preamble / a user's closing "thoughts?").
+    if (text.length > 1500) {
+      const [head, tail] = role === 'user' ? [1200, 300] : [300, 1200];
+      text = text.slice(0, head) + ' […] ' + text.slice(-tail);
+    }
     if (text) out.unshift(`${role}: ${text}`);
   }
   return out.join('\n').slice(-maxChars);
