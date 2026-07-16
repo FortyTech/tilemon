@@ -1,13 +1,17 @@
 // board.js — TileMon renderer. Framework-agnostic, zero dependencies, ESM.
 //
 //   import { mount } from './board.js'
-//   const board = mount(boardEl, null, {
+//   const board = mount(boardEl, null, {          // 2nd arg (controlsEl) is DEPRECATED + unused — pass null
 //     state, boards,                                // resolved tree + board list (for the switcher)
 //     onStatusChange:(board,path,status)=>{}, onWeightChange:(board,path,weight)=>{},
 //     onAddNode:(board,parentPath,kind,name)=>{},   // kind 'item' | 'include' (target via name->slug upstream)
 //     onAddBoard:(board,parentPath,name)=>{},        // create a bare board + include it here
 //     onRenameNode:(board,path,name)=>{}, onDeleteNode:(board,path)=>{},
 //     onSetToolbar:(board,path,bool)=>{}, onOpenBoard:(slug)=>{},
+//     slots: {                                      // host chrome injected into the root toolbar (data, not DOM)
+//       toolbarLeft:  [{ icon:'<svg…>'|'⌂', title:'Home', onClick:(e)=>{} }],   // rendered leftmost
+//       toolbarRight: [{ icon:'⋯',          title:'Account', onClick:(e)=>{} }], // rendered rightmost
+//     },                                            // board.js OWNS the buttons (native style) + fires onClick(e)
 //   })
 //   board.update(newState); board.setBoards(list)
 //
@@ -98,6 +102,8 @@ const STYLE = `
   color:var(--tlm-ink,#ECE7DA);border:1px solid var(--tlm-line,#2A2820);border-radius:6px;padding:4px 8px;cursor:pointer}
 .tlm-board .tlm-toolbar select:hover,.tlm-board .tlm-toolbar button:hover{border-color:var(--tlm-gold,#E8C56A);color:var(--tlm-gold,#E8C56A)}
 .tlm-board .tlm-toolbar .up{padding:4px 9px;font-size:14px;line-height:1}
+.tlm-board .tlm-toolbar .tb-slot{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:4px 9px}
+.tlm-board .tlm-toolbar .tb-slot svg{width:15px;height:15px;display:block}
 .tlm-board .tlm-status{position:absolute;bottom:0;left:0;right:0;height:22px;z-index:820;display:flex;align-items:center;padding:0 10px;
   background:var(--tlm-panel,#1C1A14);border-top:1px solid var(--tlm-line,#2A2820);
   font-family:"Space Mono",monospace;font-size:10px;color:var(--tlm-dim,#9A9182);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -117,6 +123,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
   const onAddNode = cb('onAddNode'), onAddBoard = cb('onAddBoard'), onRenameNode = cb('onRenameNode'), onDeleteNode = cb('onDeleteNode');
   const onSetToolbar = cb('onSetToolbar'), onOpenBoard = cb('onOpenBoard'), onDoneCooldownChange = cb('onDoneCooldownChange');
   let boards = opts.boards || [];
+  const slots = opts.slots || {};   // host chrome: { toolbarLeft:[{icon,title,onClick}], toolbarRight:[...] }
   const doc = boardEl.ownerDocument, win = doc.defaultView || globalThis;
   injectStyle(doc);
   boardEl.classList.add('tlm-board');
@@ -429,11 +436,19 @@ export function mount(boardEl, controlsEl, opts = {}) {
     const sw = boards && boards.length ? `<select id="tbBoards">` + boards.map(b => `<option value="${esc(b.slug)}"${b.slug === cur ? ' selected' : ''}>${esc(b.name)}${b.visibility === 'public' ? ' (public)' : ''}</option>`).join('') + `</select>` : '';
     const bc = pathNodes(viewRoot);   // breadcrumb: click any ancestor to climb back out
     const crumb = `<span class="tb-name">` + bc.map((n, i) => i === bc.length - 1 ? `<b>${esc(n.name)}</b>` : `<span class="cr" data-key="${esc(nkey(n))}">${esc(n.name)}</span> ／ `).join('') + `</span>`;
-    toolbarEl.innerHTML = crumb
+    // host-provided slot buttons — board.js owns the markup (native toolbar style); onClick wired below.
+    const slotBtns = (items, side) => (items || []).map((it, i) =>
+      `<button class="tb-slot" data-slot="${side}" data-i="${i}" title="${esc(it.title || '')}">${it.icon || ''}</button>`).join('');
+    toolbarEl.innerHTML = slotBtns(slots.toolbarLeft, 'L') + crumb
       + `<button id="tbAdd" title="add item">＋</button><button id="tbAddb" title="add board">⧉</button><span class="tb-spacer"></span>`
       + sw + `<button id="tbWt">weights: ${showWeights ? 'on' : 'off'}</button><button id="tbDone" title="how long done tiles linger before they fade off">done: ${doneLabel()}</button>`
-      + `<button id="tbShell" title="hide the shell chrome for this board">shell</button>`;
+      + `<button id="tbShell" title="hide the shell chrome for this board">shell</button>`
+      + slotBtns(slots.toolbarRight, 'R');
     const q = s => toolbarEl.querySelector(s);
+    toolbarEl.querySelectorAll('.tb-slot').forEach(b => {
+      const it = (b.dataset.slot === 'L' ? slots.toolbarLeft : slots.toolbarRight)[+b.dataset.i];
+      if (it && it.onClick) b.onclick = e => it.onClick(e);
+    });
     toolbarEl.querySelectorAll('.cr').forEach(s => s.onclick = () => { const t = findByKey(root, s.dataset.key); if (t) { viewRoot = t; viewRootKey = t === root ? null : nkey(t); render(); } });
     q('#tbShell').onclick = () => onSetToolbar(viewRoot._board, viewRoot._path, false);   // turn this board bare
     if (q('#tbBoards')) q('#tbBoards').onchange = () => onOpenBoard(q('#tbBoards').value);
