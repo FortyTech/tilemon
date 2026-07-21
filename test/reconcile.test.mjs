@@ -8,6 +8,7 @@ import { mkdtemp, rm, writeFile, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { flattenTiles, touchedBoards } from '../reconcile.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const SERVER = join(__dir, '..', 'server.mjs');
@@ -85,6 +86,48 @@ try {
   // 7. stop_hook_active short-circuits before any work
   r = runReconcile({ args: ['--board', 'testrepo'], stdin: '{"stop_hook_active":true}', env: decision([{ path: 'active', status: 'waiting' }]) });
   ok(!at(await stateOf('testrepo'), 'active'), 'stop_hook_active short-circuits');
+
+  // ---- routing (docs/reconcile-routing.md) ----
+
+  // 8. cross-board routing: a session whose cwd resolves to `testrepo` writes a tile tagged for a
+  //    DIFFERENT board — it must land on that board, not the cwd board. (The core bug this fixes.)
+  await api('POST', '/api/board', { name: 'Other Repo', slug: 'otherrepo', dir: join(work, 'nope') });
+  r = runReconcile({ stdin: JSON.stringify({ cwd: work }),
+    env: decision([{ board: 'otherrepo', path: 'feature', status: 'waiting', note: 'x', name: 'F' }]) });
+  ok(at(await stateOf('otherrepo'), 'feature')?.status === 'waiting', 'tile routes to the named board, not cwd');
+  ok(!at(await stateOf('testrepo'), 'feature'), 'the cwd board is NOT written for another board\'s tile');
+
+  // 9. safety gate: a decision naming a board that doesn't exist is dropped (no auto-create, no crash).
+  r = runReconcile({ stdin: JSON.stringify({ cwd: work }),
+    env: decision([{ board: 'ghost-xyz', path: 'nope', status: 'blocked' }]) });
+  ok(r.status === 0 && !r.stdout.includes('ghost-xyz'), 'unknown board is gated out, no crash');
+
+  // 10. park-on-root + alert: a tile for the HOME board's top level fires the "no board matched" note.
+  await api('POST', '/api/board', { name: 'Home', slug: 'home' });
+  r = runReconcile({ stdin: JSON.stringify({ cwd: work }), env: { TILEMON_HOME_BOARD: 'home',
+    ...decision([{ board: 'home', path: 'orphan', status: 'waiting', note: 'new project, no board', name: 'Orphan' }]) } });
+  ok(at(await stateOf('home'), 'orphan')?.status === 'waiting', 'unmatched tile lands on the home root');
+  ok(r.stdout.includes('parked on root'), 'a parked tile alerts the caller to create a bucket');
+
+  // 11. flattenTiles: dotted paths + status, recursive.
+  const flat = flattenTiles({ children: [
+    { path: 'a', name: 'A', status: 'waiting', children: [{ path: 'b', status: 'done' }] },
+    { path: 'c' },
+  ] });
+  ok(flat.some(t => t.path === 'a' && t.status === 'waiting') && flat.some(t => t.path === 'a.b' && t.status === 'done')
+     && flat.some(t => t.path === 'c'), 'flattenTiles yields dotted paths with status');
+
+  // 12. touchedBoards: file edits + explicit `tilemon flag` calls both resolve to boards (the HINT).
+  const tPath = join(work, 'ts.jsonl');
+  await writeFile(tPath, [
+    JSON.stringify({ message: { role: 'assistant', content: [
+      { type: 'tool_use', name: 'Edit', input: { file_path: join(work, 'src/x.js') } }] } }),
+    JSON.stringify({ message: { role: 'assistant', content: [
+      { type: 'tool_use', name: 'Bash', input: { command: 'npx tilemon flag otherrepo a.b waiting "y"' } }] } }),
+  ].join('\n'));
+  const touched = await touchedBoards(BASE, tPath);
+  ok(touched.has('testrepo'), 'touchedBoards picks up the board of an edited file (via resolve)');
+  ok(touched.has('otherrepo'), 'touchedBoards picks up an explicit `tilemon flag <board>` call');
 
 } finally {
   server.kill();
