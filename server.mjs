@@ -141,7 +141,7 @@ if (SUBCMD) {
     const { res, out } = await apiGet(`/api/attention${q}`);
     if (!res.ok) { console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`); process.exit(1); }
     const items = out.items || [];
-    const where = out.board || board || 'tilemon';
+    const where = out.board || board || 'home';
     if (!items.length) { console.log(`(nothing glowing on '${where}')`); process.exit(0); }
     console.log(`${items.length} glowing on '${where}':`);
     for (const i of items) console.log(`  [${i.status}] ${i.board} / ${i.name}${i.note ? ' — ' + i.note : ''}  (path: ${i.path})`);
@@ -442,7 +442,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && p === '/api/attention') {   // what needs the human within a board's TREE (follows includes); default = home board
-    const slug = url.searchParams.get('board') || 'tilemon';
+    const slug = url.searchParams.get('board') || 'home';
     try {
       const tree = await resolveBoard(slug);   // resolved => includes inlined; every node stamped with owning _board/_path
       if (!tree) return json(res, 404, { error: 'board not found: ' + slug });
@@ -715,7 +715,7 @@ await mkdir(BOARDS, { recursive: true }).catch(() => {});
 // They never mix — the dashboard lands on your board once it has content, else on the tutorial,
 // which stays revisitable in the board switcher forever.
 if ((await listBoards()).length === 0) {
-  await writeBoard('tilemon', { name: 'TileMon', visibility: 'private', source: 'native', toolbar: true, children: [] });
+  await writeBoard('home', { name: 'Home', visibility: 'private', source: 'native', toolbar: true, children: [] });
   await writeBoard('tutorial', { name: 'Tutorial', visibility: 'private', source: 'native', toolbar: true, children: [
     { id: 'welcome', name: 'This is the Tutorial board — your own board is the default. Come back any time from the board switcher.', weight: 4, status: 'todo' },
     { id: 'blocked', name: 'blocked = something is wrong and needs you: glows red and pulses (loudest).', weight: 3, status: 'blocked' },

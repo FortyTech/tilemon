@@ -38,14 +38,14 @@ try {
   // fresh dir auto-seeds an EMPTY home board + a SEPARATE, populated tutorial board (never mixed)
   {
     const bl = (await api('GET', '/api/boards')).json;
-    ok(bl.some(b => b.slug === 'tilemon' && b.items === 0), 'home board seeded empty');
+    ok(bl.some(b => b.slug === 'home' && b.items === 0), 'home board seeded empty');
     ok(bl.some(b => b.slug === 'tutorial' && b.items > 0), 'tutorial board seeded separately with content');
   }
 
   // status vocabulary includes the new `waiting` level; garbage is rejected
-  ok((await api('POST', '/api/status', { board: 'tilemon', path: 'demo', status: 'waiting', note: 'need a decision' })).status === 200, 'waiting is a valid status');
-  ok((await api('POST', '/api/status', { board: 'tilemon', path: 'demo', status: 'nonsense' })).status === 400, 'invalid status rejected');
-  await api('DELETE', '/api/node', { board: 'tilemon', path: 'demo' });   // tidy up so it doesn't affect later checks
+  ok((await api('POST', '/api/status', { board: 'home', path: 'demo', status: 'waiting', note: 'need a decision' })).status === 200, 'waiting is a valid status');
+  ok((await api('POST', '/api/status', { board: 'home', path: 'demo', status: 'nonsense' })).status === 400, 'invalid status rejected');
+  await api('DELETE', '/api/node', { board: 'home', path: 'demo' });   // tidy up so it doesn't affect later checks
 
   // --- POST /api/board: create bare boards, placed nowhere ---
   const mk = await api('POST', '/api/board', { name: 'Word Duel' });
@@ -103,7 +103,7 @@ try {
     const viaHub = (await api('GET', '/api/attention?board=hub')).json.items;
     ok(viaHub.some(i => i.board === 'attn' && i.path === 'oops'), '/api/attention follows includes, reports owning board+path');
     ok((await api('GET', '/api/attention?board=nope')).status === 404, '/api/attention 404s an unknown board');
-    // default scope = home board (tilemon), which does NOT include attn → unrelated boards don't leak in
+    // default scope = home board, which does NOT include attn → unrelated boards don't leak in
     ok(!(await api('GET', '/api/attention')).json.items.some(i => i.board === 'attn'), '/api/attention default is home-scoped (unrelated boards excluded)');
   }
 
@@ -128,21 +128,21 @@ try {
   }
 
   // --- buckets: a group is just an item you add children into ---
-  ok((await api('POST', '/api/node', { board: 'tilemon', kind: 'item', name: 'Games' })).status === 200, 'add group item');
+  ok((await api('POST', '/api/node', { board: 'home', kind: 'item', name: 'Games' })).status === 200, 'add group item');
 
   // --- include an EXISTING board (references, does not duplicate) ---
-  ok((await api('POST', '/api/node', { board: 'tilemon', path: 'games', kind: 'include', target: 'word-duel' })).status === 200, 'include existing board');
-  await api('POST', '/api/node', { board: 'tilemon', path: 'games', kind: 'include', target: 'hex-drop' });
+  ok((await api('POST', '/api/node', { board: 'home', path: 'games', kind: 'include', target: 'word-duel' })).status === 200, 'include existing board');
+  await api('POST', '/api/node', { board: 'home', path: 'games', kind: 'include', target: 'hex-drop' });
   {
-    const tree = (await api('GET', '/api/state?board=tilemon')).json;
+    const tree = (await api('GET', '/api/state?board=home')).json;
     const wd = at(tree, 'games.word-duel');
     ok(wd && wd._boardLink === 'word-duel', 'include renders as a board-link tile under the bucket');
     ok((await api('GET', '/api/boards')).json.filter(b => b.slug === 'word-duel').length === 1, 'include did not create a duplicate board');
   }
 
   // include validation + cycle guards
-  ok((await api('POST', '/api/node', { board: 'tilemon', kind: 'include', target: 'nope' })).status === 404, 'include of missing board rejected');
-  ok((await api('POST', '/api/node', { board: 'tilemon', kind: 'include', target: 'tilemon' })).status === 409, 'self-include rejected');
+  ok((await api('POST', '/api/node', { board: 'home', kind: 'include', target: 'nope' })).status === 404, 'include of missing board rejected');
+  ok((await api('POST', '/api/node', { board: 'home', kind: 'include', target: 'home' })).status === 409, 'self-include rejected');
   // clean chain c1 -> c2 -> c3; closing it (c3 -> c1) is a transitive cycle
   await api('POST', '/api/board', { slug: 'c1', name: 'C1' });
   await api('POST', '/api/board', { slug: 'c2', name: 'C2' });
@@ -152,22 +152,22 @@ try {
   ok((await api('POST', '/api/node', { board: 'c3', kind: 'include', target: 'c1' })).status === 409, 'transitive include cycle rejected');
 
   // --- move: re-parent the word-duel tile from Games into Tools (in-board) ---
-  await api('POST', '/api/node', { board: 'tilemon', kind: 'item', name: 'Tools group' }); // id: tools-group (tools slug taken? no, that's a board slug; node ids are separate)
+  await api('POST', '/api/node', { board: 'home', kind: 'item', name: 'Tools group' }); // id: tools-group (tools slug taken? no, that's a board slug; node ids are separate)
   // move needs a real node path; move games.word-duel under the 'games' sibling 'tools-group'
-  const mv = await api('POST', '/api/move', { board: 'tilemon', path: 'games.word-duel', toPath: 'tools-group' });
+  const mv = await api('POST', '/api/move', { board: 'home', path: 'games.word-duel', toPath: 'tools-group' });
   ok(mv.status === 200, 'move within a board');
   {
-    const tree = (await api('GET', '/api/state?board=tilemon')).json;
+    const tree = (await api('GET', '/api/state?board=home')).json;
     ok(!at(tree, 'games.word-duel'), 'node gone from old parent');
     ok(at(tree, 'tools-group.word-duel')?._boardLink === 'word-duel', 'node present under new parent');
   }
   // structural guard: cannot move a node into its own descendant
-  ok((await api('POST', '/api/move', { board: 'tilemon', path: 'tools-group', toPath: 'tools-group.word-duel' })).status === 409, 'move into own descendant rejected');
-  ok((await api('POST', '/api/move', { board: 'tilemon', path: 'games.nope', toPath: 'tools-group' })).status === 404, 'move of missing node rejected');
+  ok((await api('POST', '/api/move', { board: 'home', path: 'tools-group', toPath: 'tools-group.word-duel' })).status === 409, 'move into own descendant rejected');
+  ok((await api('POST', '/api/move', { board: 'home', path: 'games.nope', toPath: 'tools-group' })).status === 404, 'move of missing node rejected');
   // an in-board move of a subtree that includes a back-referencing board is still allowed (graph unchanged)
-  ok((await api('POST', '/api/move', { board: 'tilemon', path: 'tools-group', toPath: 'games' })).status === 200, 'in-board move not blocked by include guard');
+  ok((await api('POST', '/api/move', { board: 'home', path: 'tools-group', toPath: 'games' })).status === 200, 'in-board move not blocked by include guard');
   // cross-board: moving the word-duel include INTO the word-duel board would self-reference -> reject
-  ok((await api('POST', '/api/move', { board: 'tilemon', path: 'games.tools-group', toBoard: 'word-duel', toPath: '' })).status === 409, 'cross-board move creating a cycle rejected');
+  ok((await api('POST', '/api/move', { board: 'home', path: 'games.tools-group', toBoard: 'word-duel', toPath: '' })).status === 409, 'cross-board move creating a cycle rejected');
 
   // --- daemon mode: a detached server survives the launcher exiting; --stop kills it ---
   {
