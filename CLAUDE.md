@@ -10,9 +10,9 @@ failure mode — when it feels busy, subtract. Distributed as an `npx` tool over
 
 **Read [`SPEC.md`](./SPEC.md) first** — it is the ratified design (locked model,
 architecture, roadmap, open decisions). This file is the working-state layer on top.
-[`HOSTED.md`](./HOSTED.md) is the v5 hosted (tilemon.com) design — where the data lives when
-your PC is off, the `boards` JSONB schema, the human/agent credential split, and the two SPEC
-[LOCKED] points it supersedes (multi-parent mounts; no `parent_id`).
+The v5 hosted (tilemon.com) design lives in the private `tilemon-cloud` repo (its `HOSTED.md`) —
+where the data lives when your PC is off, and the two SPEC [LOCKED] points it supersedes
+(multi-parent mounts; no `parent_id`).
 
 ## Status
 
