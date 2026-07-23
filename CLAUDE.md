@@ -10,6 +10,9 @@ failure mode — when it feels busy, subtract. Distributed as an `npx` tool over
 
 **Read [`SPEC.md`](./SPEC.md) first** — it is the ratified design (locked model,
 architecture, roadmap, open decisions). This file is the working-state layer on top.
+[`HOSTED.md`](./HOSTED.md) is the v5 hosted (tilemon.com) design — where the data lives when
+your PC is off, the `boards` JSONB schema, the human/agent credential split, and the two SPEC
+[LOCKED] points it supersedes (multi-parent mounts; no `parent_id`).
 
 ## Status
 
@@ -158,14 +161,22 @@ Playwright. Eyeball the actual board in a real browser when iterating on visuals
 
 ## Next (not built)
 
-- **`attention.md` — user-defined attention rules (NEXT, ahead of the move UI).** Free-text,
-  agent-prompt-style rules for how agents set status (e.g. "uncommitted changes → blocked until
-  committed"). Executed by an agent on a trigger (on-run in a repo and/or a scheduled refresh),
-  which reads the rules and POSTs status — core stays dumb. **Rules belong to the operator/viewer,
+- **`attention.md` — user-defined attention rules — ✅ BUILT as `tilemon reconcile`.** The Stop-hook
+  executor (`reconcile.mjs`, dispatched from `server.mjs`): resolves the folder's board, gathers
+  ground-truth facts (git/gh) + the recent conversation, hands them to a **sealed tool-less** `claude -p`
+  that decides tile changes against the operator's status **definitions** (attention.md is now organised
+  by status, each heading defining the bar — incl. a strict Definition of Done so nothing is falsely
+  cleared), then POSTs the result. Non-blocking, near-silent (one line only when a tile changed). Core
+  stays dumb — all the smarts live in `reconcile.mjs`; the judge has no tools so its blast radius is "a
+  wrong tile", never a shell. Original free-text design notes below. **Rules belong to the operator/viewer,
   not the board** (same personal-lens category as weight; never baked into shared data): lives
   operator-side (`~/.tilemon/attention.md` locally; stays client-side in SaaS). Per-board/per-node
   granularity by *targeting inside* the file (keyed by slug/path). Guardrail: a few glow-triggers,
   not auto-spawned task lists. Deferred sub-layer: board-owner default rules overridden per viewer.
+- **Theming — per-status/category colours (configurable).** `in_progress` should read as *active*
+  (e.g. blue), distinct from `waiting` amber; a **"quick win"** marker (cheap-to-clear tiles — git
+  ops the common case) in its own colour (e.g. purple); operator-configurable palette (fill/outline/
+  pulse per status) with safe defaults. Frontend work — `board.js` + `dashboard.html`; not started.
 - **Move UI (E):** a "move" icon in the hover bar arms move-mode; drag drops the tile into the
   highlighted innermost container (reuse the gold target highlight); calls `/api/move`.
 - **"Growing the board"** skill note: incremental add of a workspace/project; reshape with `/api/move`.
