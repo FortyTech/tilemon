@@ -169,7 +169,7 @@ the mount for free (it's the same area-weighted rollup, it doesn't know it cross
 Discipline: a mount is **read-through, acyclic** — you can't mount your master tree
 back inside a child. **[LOCKED]**
 
-> **Revised (see [`HOSTED.md`](./HOSTED.md) §11): mounts are multi-parent, not single-parent.**
+> **Revised (v5 hosted design, in the private `tilemon-cloud` repo): mounts are multi-parent, not single-parent.**
 > The mount reference lives on the *parent* (a node with `include: "<slug>"`); the child board
 > stores nothing about being included, so it stays independently top-level and the *same* board
 > can be mounted under many parents. Keep `acyclic`; drop the old `single-parent` restriction.
@@ -300,10 +300,10 @@ thrown away.
   store is just *another implementation of the source interface*; the renderer doesn't change.
   Tree storage: **one row per board, the tree as a JSONB column** — `boards(tenant_id, slug,
   name, source, visibility, tree, updated_at)`. (Supersedes the earlier `parent_id` adjacency-list
-  sketch, which wrongly made the child know its parent — see [`HOSTED.md`](./HOSTED.md).)
+  sketch, which wrongly made the child know its parent.)
   **All the hard problems (auth, isolation, concurrent writes) land here, last, on purpose** —
-  after the model is proven. Don't build this to find out if you want it. **Full design:
-  [`HOSTED.md`](./HOSTED.md).**
+  after the model is proven. Don't build this to find out if you want it. **Full design: the
+  private `tilemon-cloud` repo.**
 
 The reframe that keeps you sane: **the board is the foundation; Jira/hosting are plugins you may
 never need.** v1 + v2 may be the entire product for one person.

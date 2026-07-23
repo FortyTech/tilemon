@@ -8,3 +8,4 @@ state.*.json
 !state.sample.json
 .DS_Store
 *.tgz
+HOSTED.md
