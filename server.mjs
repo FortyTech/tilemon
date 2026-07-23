@@ -38,10 +38,11 @@
 // TILEMON_TOKEN is set, every write route requires `Authorization: Bearer <token>`.
 
 import http from 'node:http';
+import { createEngine, slugOk } from './engine.js';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
-import { existsSync, unlinkSync, realpathSync } from 'node:fs';
+import { unlinkSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -240,20 +241,11 @@ if (hasFlag('--daemon') || hasFlag('-d')) {
   console.log('TileMon did not come up — run `npx tilemon` in the foreground to see the error.'); process.exit(1);
 }
 
-const VALID_STATUS = new Set(['todo', 'in_progress', 'waiting', 'blocked', 'done']);
 const clients = new Set();
 
 // ---- slugs: a board is addressed by a filesystem-safe slug, never a path ----
-const slugOk = s => typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(s);
+// (slug/id semantics — slugOk/humanize/slugify/uniq — live in engine.js, shared with hosted)
 const boardFile = slug => join(BOARDS, slug + '.json');
-const humanize = id => id.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-const slugify = s => (String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'item');
-// make `base` unique among a set of existing ids/slugs (append -2, -3, …)
-function uniq(base, taken) {
-  if (!taken.has(base)) return base;
-  let i = 2; while (taken.has(`${base}-${i}`)) i++;
-  return `${base}-${i}`;
-}
 
 // ---- board io (atomic writes; all writes serialised so near-simultaneous ones don't clobber) ----
 async function readBoard(slug) {
@@ -290,102 +282,28 @@ async function listBoards() {
   return out;
 }
 
-// ---- heat rollup for an included board's summary tile (weight-proxied; the client uses rendered area) ----
-// ---- resolve a board for rendering: includes are INLINED at full granularity ----
-// Every node is stamped with its owning board (`_board`) and local dotted path within that
-// board (`_path`), so the client can write to the right board even across nested boundaries.
-// An include becomes a boundary node (`_boardLink: slug`) whose children are the sub-board's
-// resolved tree. Read-only sources mark their nodes `_ro`. Acyclic-guarded.
-async function resolveBoard(slug, chain = []) {
-  if (chain.includes(slug)) return { __cycle: true };
-  let board;
-  try { board = await readBoard(slug); }
-  catch { return null; }
-  const ro = typeof board.source === 'string' && board.source.startsWith('jira://');
-  const build = async (node, path) => {
-    if (node.include !== undefined) {
-      const sub = await resolveBoard(node.include, [...chain, slug]);
-      const cyc = !sub || sub.__cycle;
-      return { id: node.id, name: node.name || humanize(node.include), weight: node.weight,
-               _board: slug, _path: path, _boardLink: node.include,      // boundary: this node lives in THIS board
-               toolbar: (!cyc && sub) ? sub.toolbar : undefined,          // pass the sub-board's shell flag through
-               _missing: !sub || undefined, _cycle: (sub && sub.__cycle) || undefined,
-               children: cyc ? [] : (sub.children || []) };              // children carry the sub-board's own stamps
-    }
-    const out = { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, seen: node.seen, _board: slug, _path: path };
-    if (ro) out._ro = true;
-    if (node.children && node.children.length) {
-      out.children = [];
-      for (const c of node.children) out.children.push(await build(c, path ? path + '.' + c.id : c.id));
-    }
-    return out;
-  };
-  const children = [];
-  for (const c of (board.children || [])) children.push(await build(c, c.id));
-  const tree = { name: board.name || slug, visibility: board.visibility || 'private',
-                 source: board.source || 'native', _board: slug, _path: '', children };
-  if (board.toolbar !== undefined) tree.toolbar = board.toolbar;   // app-shell flag (absent => shell; explicit false => bare)
-  if (ro) tree._sourceStub = 'jira';
-  return tree;
-}
+// ---- the shared semantics engine over this file store ----
+// engine.js owns what every op MEANS (upsert, add/move/rename/delete, cycle guards, resolve
+// stamping) — shared verbatim with the hosted app, which plugs in Postgres instead of files.
+// This side owns only WHERE boards live: read/write JSON files (slug-guarded against path
+// escape), list what exists. Store-specific metadata (the `dir` folder link) stays here too.
+const engine = createEngine({
+  readBoard: async slug => {
+    if (!slugOk(slug)) return null;   // a hand-edited include could hold a path-escaping "slug"
+    // null means ABSENT only. A file that exists but can't be read (truncated mid-edit, fs
+    // error) must THROW — engine.status treats null as "create fresh", so mapping read
+    // failures to null would silently overwrite a real board.
+    try { return await readBoard(slug); }
+    catch (e) { if (e && e.code === 'ENOENT') return null; throw e; }
+  },
+  writeBoard,
+  listSlugs: async () => {
+    try { return (await readdir(BOARDS)).filter(f => f.endsWith('.json') && !f.endsWith('.tmp.json')).map(f => f.slice(0, -5)); }
+    catch { return []; }
+  },
+});
+const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-side entry point
 
-// ---- include-graph helpers (structure is a tree per board; includes form a cross-board graph) ----
-// all board slugs referenced by `include` anywhere in a node's subtree
-function collectIncludes(node) {
-  const out = [], stack = [node];
-  while (stack.length) {
-    const n = stack.pop();
-    if (n.include !== undefined) out.push(n.include);
-    if (n.children) for (const c of n.children) stack.push(c);
-  }
-  return out;
-}
-// does board `from` reach board `target` by following includes (transitively)?
-async function includeReaches(from, target, seen = new Set()) {
-  if (from === target) return true;
-  if (seen.has(from)) return false;
-  seen.add(from);
-  let b; try { b = await readBoard(from); } catch { return false; }
-  for (const inc of collectIncludes({ children: b.children || [] }))
-    if (await includeReaches(inc, target, seen)) return true;
-  return false;
-}
-
-// ---- resolve a dotted-id path in a board (node must exist) ----
-function resolvePath(board, path) {
-  const parts = path.split('.');
-  let node = board;
-  for (const part of parts) {
-    const next = (node.children || []).find(c => c.id === part);
-    if (!next) return null;
-    node = next;
-  }
-  return node;
-}
-
-// ---- upsert a dotted-id path (create missing nodes, born small) and set status/note ----
-function upsert(board, path, { status, note, name }) {
-  const parts = path.split('.');
-  let node = board;
-  parts.forEach((part, i) => {
-    const kids = node.children || (node.children = []);
-    const last = i === parts.length - 1;
-    let next = kids.find(c => c.id === part);
-    if (!next) {
-      next = { id: part, name: last && name ? name : humanize(part), weight: 1 };
-      if (last) { next.status = status; if (note != null) next.note = note; }
-      else next.children = [];
-      kids.push(next);
-    } else if (last) {
-      next.status = status;
-      if (note != null) next.note = note;
-      if (name && !next.name) next.name = name;
-    }
-    node = next;
-  });
-  node.seen = Date.now();   // liveness heartbeat: stamped on every status write; client shows "live" dot while fresh
-  return node;
-}
 
 // ---- SSE ----
 function broadcast() { for (const res of clients) res.write('data: change\n\n'); }
@@ -492,17 +410,9 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { board: slug, path, status, note, name } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if (!path) return json(res, 400, { error: 'missing path' });
-      if (!VALID_STATUS.has(status)) return json(res, 400, { error: 'bad status' });
-      let board;
-      if (existsSync(boardFile(slug))) board = await readBoard(slug);
-      else board = { name: humanize(slug), visibility: 'private', source: 'native', children: [] }; // agents can create a board
-      if (typeof board.source === 'string' && board.source.startsWith('jira://'))
-        return json(res, 409, { error: 'board is a read-only jira source' });
-      upsert(board, path, { status, note, name });
-      await writeBoard(slug, board); broadcast();
-      json(res, 200, { ok: true });
+      const r = await engine.status(slug, path, { status, note, name });
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
@@ -510,14 +420,9 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { board: slug, path, weight } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
-      const board = await readBoard(slug);
-      const node = resolvePath(board, path);
-      if (!node) return json(res, 404, { error: 'path not found: ' + path });
-      node.weight = Number(weight);
-      await writeBoard(slug, board); broadcast();
-      json(res, 200, { ok: true });
+      const r = await engine.weight(slug, path, weight);
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
@@ -526,31 +431,9 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { board: slug, path = '', kind = 'item', name, target } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
-      const board = await readBoard(slug);
-      if (typeof board.source === 'string' && board.source.startsWith('jira://'))
-        return json(res, 409, { error: 'board is a read-only jira source' });
-      const parent = path ? resolvePath(board, path) : board;   // no path => board root
-      if (!parent) return json(res, 404, { error: 'path not found: ' + path });
-      const kids = parent.children || (parent.children = []);
-      const taken = new Set(kids.map(c => c.id));
-      if (kind === 'include') {                                  // reference an EXISTING board (a navigable summary tile)
-        if (!slugOk(target)) return json(res, 400, { error: 'bad or missing target board' });
-        if (!existsSync(boardFile(target))) return json(res, 404, { error: 'target board not found: ' + target });
-        if (target === slug || await includeReaches(target, slug))
-          return json(res, 409, { error: 'would create an include cycle' });
-        const nm = (name && String(name).trim()) ? String(name).trim() : humanize(target);
-        kids.push({ id: uniq(target, taken), name: nm, weight: 1, include: target });
-      } else if (kind === 'item') {                              // a plain node: a task, or a bucket once you add into it
-        if (!name || !String(name).trim()) return json(res, 400, { error: 'missing name' });
-        const nm = String(name).trim();
-        kids.push({ id: uniq(slugify(nm), taken), name: nm, weight: 1, status: 'todo' });
-      } else {
-        return json(res, 400, { error: 'unknown kind (item | include)' });
-      }
-      await writeBoard(slug, board); broadcast();
-      json(res, 200, { ok: true });
+      const r = await engine.addNode(slug, { path, kind, name, target });
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
@@ -558,16 +441,9 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { board: slug, path, name, toolbar } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if ((name == null || !String(name).trim()) && typeof toolbar !== 'boolean') return json(res, 400, { error: 'nothing to change' });
-      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
-      const board = await readBoard(slug);
-      const node = path ? resolvePath(board, path) : board;   // no path => the board (the "frame" tile)
-      if (!node) return json(res, 404, { error: 'path not found: ' + path });
-      if (name != null && String(name).trim()) node.name = String(name).trim();
-      if (typeof toolbar === 'boolean') node.toolbar = toolbar;   // store explicitly (false = bare)
-      await writeBoard(slug, board); broadcast();
-      json(res, 200, { ok: true });
+      const r = await engine.patchNode(slug, path || '', { name, toolbar });
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
@@ -575,18 +451,9 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { board: slug, path } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if (!path) return json(res, 400, { error: 'missing path' });
-      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
-      const board = await readBoard(slug);
-      const parts = path.split('.'); const id = parts.pop();
-      const parent = parts.length ? resolvePath(board, parts.join('.')) : board;
-      if (!parent || !parent.children) return json(res, 404, { error: 'path not found: ' + path });
-      const before = parent.children.length;
-      parent.children = parent.children.filter(c => c.id !== id);
-      if (parent.children.length === before) return json(res, 404, { error: 'path not found: ' + path });
-      await writeBoard(slug, board); broadcast();
-      json(res, 200, { ok: true });
+      const r = await engine.removeNode(slug, path);
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
@@ -595,23 +462,12 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { name, slug: wantSlug, source, dir } = await body(req);
-      if (!name || !String(name).trim()) return json(res, 400, { error: 'missing name' });
-      const nm = String(name).trim();
-      const existing = new Set((await listBoards()).map(b => b.slug));
-      let slug;
-      if (wantSlug !== undefined) {
-        if (!slugOk(wantSlug)) return json(res, 400, { error: 'bad slug' });
-        if (existing.has(wantSlug)) return json(res, 409, { error: 'board already exists: ' + wantSlug });
-        slug = wantSlug;
-      } else {
-        slug = uniq(slugify(nm), existing);
-      }
-      const src = (typeof source === 'string' && source.trim()) ? source.trim() : 'native';
-      const board = { name: nm, visibility: 'private', source: src, children: [] };
-      if (typeof dir === 'string' && dir.trim()) board.dir = canonDir(dir.trim());   // the folder this board maps to (the link), canonicalised
-      await writeBoard(slug, board);
-      broadcast();
-      json(res, 200, { ok: true, slug });
+      const extra = {};   // store-specific board fields the engine passes through untouched
+      if (typeof source === 'string' && source.trim()) extra.source = source.trim();
+      if (typeof dir === 'string' && dir.trim()) extra.dir = canonDir(dir.trim());   // the folder this board maps to (the link), canonicalised
+      const r = await engine.createBoard(name, wantSlug, extra);
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true, slug: r.slug });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
@@ -619,57 +475,22 @@ const server = http.createServer(async (req, res) => {
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
       const { slug, dir, name } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing slug' });
-      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
-      const board = await readBoard(slug);
-      if (typeof dir === 'string') { const d = dir.trim(); if (d) board.dir = canonDir(d); else delete board.dir; }   // '' clears the link
-      if (name != null && String(name).trim()) board.name = String(name).trim();
-      await writeBoard(slug, board); broadcast();
-      json(res, 200, { ok: true });
+      const r = await engine.updateBoard(slug, board => {
+        if (typeof dir === 'string') { const d = dir.trim(); if (d) board.dir = canonDir(d); else delete board.dir; }   // '' clears the link
+        if (name != null && String(name).trim()) board.name = String(name).trim();
+      });
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
   if (req.method === 'POST' && p === '/api/move') {   // HUMAN: re-parent a node within or across boards
     if (!authed(req)) return json(res, 401, { error: 'unauthorized' });
     try {
-      const { board: slug, path, toBoard = slug, toPath = '' } = await body(req);
-      if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
-      if (!path) return json(res, 400, { error: 'missing path' });
-      if (!slugOk(toBoard)) return json(res, 400, { error: 'bad toBoard slug' });
-      if (!existsSync(boardFile(slug))) return json(res, 404, { error: 'board not found: ' + slug });
-      if (!existsSync(boardFile(toBoard))) return json(res, 404, { error: 'toBoard not found: ' + toBoard });
-      const sameBoard = slug === toBoard;
-      // structural guard: within a board, a node can't move into itself or one of its descendants
-      if (sameBoard && (toPath === path || toPath.startsWith(path + '.')))
-        return json(res, 409, { error: 'cannot move a node into itself' });
-      const src = await readBoard(slug);
-      if (typeof src.source === 'string' && src.source.startsWith('jira://'))
-        return json(res, 409, { error: 'source board is a read-only jira source' });
-      // detach the node from its parent (in memory; not persisted until every check passes)
-      const parts = path.split('.'); const id = parts.pop();
-      const srcParent = parts.length ? resolvePath(src, parts.join('.')) : src;
-      if (!srcParent || !srcParent.children) return json(res, 404, { error: 'path not found: ' + path });
-      const idx = srcParent.children.findIndex(c => c.id === id);
-      if (idx < 0) return json(res, 404, { error: 'path not found: ' + path });
-      const dest = sameBoard ? src : await readBoard(toBoard);   // same object when in-board, so the splice persists
-      if (typeof dest.source === 'string' && dest.source.startsWith('jira://'))
-        return json(res, 409, { error: 'destination board is a read-only jira source' });
-      const [node] = srcParent.children.splice(idx, 1);
-      // include-cycle guard (cross-board only — an in-board move can't change the board graph):
-      // any board this subtree includes must not equal or reach the destination board.
-      if (!sameBoard)
-        for (const inc of collectIncludes(node))
-          if (inc === toBoard || await includeReaches(inc, toBoard))
-            return json(res, 409, { error: 'would create an include cycle' });
-      const destParent = toPath ? resolvePath(dest, toPath) : dest;
-      if (!destParent) return json(res, 404, { error: 'toPath not found: ' + toPath });
-      const dkids = destParent.children || (destParent.children = []);
-      node.id = uniq(node.id, new Set(dkids.map(c => c.id)));     // avoid an id clash among new siblings
-      dkids.push(node);
-      if (sameBoard) await writeBoard(slug, src);
-      else { await writeBoard(slug, src); await writeBoard(toBoard, dest); }
-      broadcast();
-      json(res, 200, { ok: true });
+      const { board: slug, path, toBoard, toPath = '' } = await body(req);
+      const r = await engine.moveNode(slug, path, toBoard, toPath);
+      if (r.error) return json(res, r.status, { error: r.error });
+      broadcast(); json(res, 200, { ok: true });
     } catch (e) { json(res, 400, { error: String(e) }); }
     return;
   }
