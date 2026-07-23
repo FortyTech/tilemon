@@ -91,7 +91,7 @@ async function load(s) {
 // on when set up; the tutorial only takes over on a fresh install and stays in the switcher.
 const pick = bs => {
   const get = s => bs.find(b => b.slug === s);
-  const home = get('tilemon'), tut = get('tutorial');
+  const home = get('home'), tut = get('tutorial');
   const b = (home && home.items > 0 && home)          // your home board, once it has content
          || tut                                        // else the tutorial (fresh install)
          || home                                       // else the (still-empty) home board

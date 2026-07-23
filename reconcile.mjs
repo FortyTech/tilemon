@@ -19,7 +19,7 @@
 //   Stop hook (any repo):  "$CLAUDE_PROJECT_DIR" Stop -> `npx tilemon reconcile`  (hook JSON on stdin)
 //   flags: --dry-run (decide + print, post nothing) · --model <id> · --board <slug> (force single board)
 //   env:   TILEMON_RECONCILE_MODEL (default haiku) · TILEMON_RECONCILE_TIMEOUT_MS (default 90000)
-//          TILEMON_HOME_BOARD (default "tilemon") · TILEMON_RECONCILE_MAX_BOARDS (default 6)
+//          TILEMON_HOME_BOARD (default "home") · TILEMON_RECONCILE_MAX_BOARDS (default 6)
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -37,7 +37,7 @@ export async function reconcile({ BOARDS, CLIENT_BASE, TOKEN, argv = [] }) {
   const model = opts.model || process.env.TILEMON_RECONCILE_MODEL || 'claude-haiku-4-5-20251001';
   const timeout = Number(process.env.TILEMON_RECONCILE_TIMEOUT_MS || 90000);
   const contextChars = Number(process.env.TILEMON_RECONCILE_CONTEXT_CHARS || 16000);
-  const homeSlug = process.env.TILEMON_HOME_BOARD || 'tilemon';
+  const homeSlug = process.env.TILEMON_HOME_BOARD || 'home';
   const maxBoards = Number(process.env.TILEMON_RECONCILE_MAX_BOARDS || 6);
 
   const input = readStdinJson();                 // the Stop-hook payload, when piped
