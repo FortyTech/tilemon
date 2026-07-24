@@ -20,8 +20,10 @@
 //   GET    /board.js                -> renderer module
 //   GET    /api/boards              -> [{ slug, name, visibility, source, dir? }]
 //   GET    /api/resolve?dir=<abs>   -> { board, dir } : the board whose `dir` is the longest prefix of <abs> (folder -> board)
-//   GET    /api/attention?board=<slug> -> { board, items:[{board,path,name,note,status,seen}] } : waiting/blocked within a board's TREE (follows includes, blocked first); default slug = tilemon (home)
-//   GET    /api/state?board=<slug>  -> resolved tree (includes -> navigable summary tiles, acyclic)
+//   GET    /api/state                  -> { boards:[{slug,name,dir?,tree}] } : AGGREGATE — every board + resolved tree, one call
+//   GET    /api/state?board=<slug>     -> resolved tree (includes -> navigable summary tiles, acyclic)
+//   GET    /api/state?glowing[&board=] -> { items:[{board,path,name,note,status,seen,area}] } : waiting/blocked (one board or ALL), blocked-first
+//   GET    /api/attention?board=<slug> -> DEPRECATED alias of ?glowing (kept for old installs)
 //   GET    /api/events              -> Server-Sent Events; "change" on any write
 //   POST   /api/status {board,path,status,note?,name?} -> AGENT: upsert path, set status/note
 //   POST   /api/weight {board,path,weight}             -> HUMAN: set weight (node must exist)
@@ -138,11 +140,11 @@ if (SUBCMD) {
   // `tilemon attention [board]` — verified READ of what's glowing; board defaults to the home board
   if (SUBCMD === 'attention') {
     const board = cmdArgs.find(a => !a.startsWith('-'));
-    const q = board ? `?board=${encodeURIComponent(board)}` : '';
-    const { res, out } = await apiGet(`/api/attention${q}`);
+    const q = board ? `?glowing=1&board=${encodeURIComponent(board)}` : '?glowing=1';
+    const { res, out } = await apiGet(`/api/state${q}`);
     if (!res.ok) { console.error(`✗ read failed (HTTP ${res.status}) @ ${CLIENT_BASE}: ${out.error || res.statusText}`); process.exit(1); }
     const items = out.items || [];
-    const where = out.board || board || 'home';
+    const where = board || 'all boards';
     if (!items.length) { console.log(`(nothing glowing on '${where}')`); process.exit(0); }
     console.log(`${items.length} glowing on '${where}':`);
     for (const i of items) console.log(`  [${i.status}] ${i.board} / ${i.name}${i.note ? ' — ' + i.note : ''}  (path: ${i.path})`);
@@ -304,6 +306,27 @@ const engine = createEngine({
 });
 const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-side entry point
 
+// Walk a resolved tree collecting the glowing (waiting/blocked) tiles, each stamped with `area` (its
+// share of the board = product of normalised sibling weights). Dedupes by owning board+path. Shared by
+// GET /api/state?glowing and the deprecated GET /api/attention.
+function collectGlowing(tree, keys = new Set(), out = []) {
+  (function walk(node, acc) {
+    const kids = node.children || [];
+    const tot = kids.reduce((s, c) => s + (c.weight ?? 1), 0) || 1;
+    for (const c of kids) {
+      const area = acc * ((c.weight ?? 1) / tot);
+      if (c.status === 'waiting' || c.status === 'blocked') {
+        const key = c._board + '::' + c._path;
+        if (!keys.has(key)) { keys.add(key); out.push({ board: c._board, path: c._path, name: c.name || c.id, status: c.status, note: c.note || '', seen: c.seen, area }); }
+      }
+      walk(c, area);
+    }
+  })(tree, 1);
+  return out;
+}
+// blocked before waiting; within a level, biggest area (most of your attention) first
+const glowingSort = (a, z) => ((a.status === 'blocked' ? 0 : 1) - (z.status === 'blocked' ? 0 : 1)) || (z.area - a.area);
+
 
 // ---- SSE ----
 function broadcast() { for (const res of clients) res.write('data: change\n\n'); }
@@ -359,41 +382,37 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && p === '/api/attention') {   // what needs the human within a board's TREE (follows includes); default = home board
+  if (req.method === 'GET' && p === '/api/attention') {   // DEPRECATED alias — use GET /api/state?glowing. Kept for old installs.
     const slug = url.searchParams.get('board') || 'home';
-    try {
-      const tree = await resolveBoard(slug);   // resolved => includes inlined; every node stamped with owning _board/_path
-      if (!tree) return json(res, 404, { error: 'board not found: ' + slug });
-      const keys = new Set(), out = [];
-      // `area` = the tile's share of the whole board = path-product of normalized sibling weights
-      // (importance IS on-screen area, so this is the human's revealed attention allocation, exact
-      // and resolution-independent — no need to measure rendered pixels). Carried down the walk.
-      (function walk(node, acc) {
-        const kids = node.children || [];
-        const tot = kids.reduce((s, c) => s + (c.weight ?? 1), 0) || 1;
-        for (const c of kids) {
-          const area = acc * ((c.weight ?? 1) / tot);
-          if (c.status === 'waiting' || c.status === 'blocked') {
-            const key = c._board + '::' + c._path;   // address on the OWNING board; dedupe a board included more than once
-            if (!keys.has(key)) { keys.add(key);
-              out.push({ board: c._board, path: c._path, name: c.name || c.id, status: c.status, note: c.note || '', seen: c.seen, area }); }
-          }
-          walk(c, area);
-        }
-      })(tree, 1);
-      // blocked before waiting; within a level, biggest area (most of your attention) first
-      out.sort((a, z) => ((a.status === 'blocked' ? 0 : 1) - (z.status === 'blocked' ? 0 : 1)) || (z.area - a.area));
-      json(res, 200, { board: slug, items: out });
-    } catch (e) { json(res, 500, { error: String(e) }); }
-    return;
-  }
-  if (req.method === 'GET' && p === '/api/state') {
-    const slug = url.searchParams.get('board');
-    if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
     try {
       const tree = await resolveBoard(slug);
       if (!tree) return json(res, 404, { error: 'board not found: ' + slug });
-      json(res, 200, tree);
+      json(res, 200, { board: slug, items: collectGlowing(tree).sort(glowingSort) });
+    } catch (e) { json(res, 500, { error: String(e) }); }
+    return;
+  }
+  if (req.method === 'GET' && p === '/api/state') {   // one board's tree, OR ?glowing (waiting/blocked), OR no-param AGGREGATE (all boards)
+    const slug = url.searchParams.get('board');
+    const glowing = url.searchParams.get('glowing');
+    try {
+      // ?glowing[&board=] → just the waiting/blocked tiles (one board, or ALL). Subsumes /api/attention.
+      if (glowing != null) {
+        const slugs = slug ? [slug] : (await listBoards()).map(b => b.slug);
+        const keys = new Set(), items = [];
+        for (const s of slugs) { const t = await resolveBoard(s); if (t) collectGlowing(t, keys, items); }
+        return json(res, 200, { items: items.sort(glowingSort) });
+      }
+      // ?board=X → that one board's resolved tree (bare — the dashboard's shape, unchanged).
+      if (slug) {
+        if (!slugOk(slug)) return json(res, 400, { error: 'bad or missing board slug' });
+        const tree = await resolveBoard(slug);
+        if (!tree) return json(res, 404, { error: 'board not found: ' + slug });
+        return json(res, 200, tree);
+      }
+      // no params → AGGREGATE: every board + its resolved tree, in ONE call (the reconciler's inventory).
+      const boards = [];
+      for (const b of await listBoards()) { const tree = await resolveBoard(b.slug); if (tree) boards.push({ slug: b.slug, name: b.name, dir: b.dir, tree }); }
+      json(res, 200, { boards });
     } catch (e) { json(res, 500, { error: String(e) }); }
     return;
   }

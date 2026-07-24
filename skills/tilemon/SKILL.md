@@ -37,7 +37,7 @@ at once. You are just one client. So:
    answers, `npx tilemon --daemon` starts it detached; `--stop` kills it.) **Never read TileMon's own
    source to work out how to run it** — this skill is the complete manual; treat the server as a black
    box behind the API. To see **what's currently glowing** (waiting on the human), read it — don't
-   guess: `tilemon attention [board]` (board defaults to the portfolio home), or `GET /api/attention`.
+   guess: `tilemon attention [board]` (board defaults to the portfolio home), or `GET /api/state?glowing=1`.
 2. **Address your work.** Resolve your `board` *with certainty* — don't guess from the folder name and
    never invent a new board: run **`tilemon resolve`** (defaults to your cwd; or `tilemon resolve
    <dir>`). It prints the slug of the board that owns this folder (the one whose `dir` is the longest
