@@ -164,6 +164,12 @@ is just an item you add children into. Agents never touch these — they only `P
 Set `TILEMON_TOKEN` to require `Authorization: Bearer <token>` on the write routes
 before exposing the port beyond a trusted network.
 
+**Where credentials live:** `TILEMON_TOKEN` and `TILEMON_URL` are read from the environment, but
+if they're not set, the CLI loads them from **`~/.tilemon/credentials`** — a dotenv-style file next
+to your boards (`TILEMON_TOKEN=…` / `TILEMON_URL=…`, one per line). That's the canonical home: it sits
+outside every git repo, so a stray `git clean` can't wipe it, and one file holds your whole
+point-at-hosted config. An explicit env var still wins over the file.
+
 ## The renderer is reusable
 
 `board.js` is a framework-agnostic ES module that owns no data — you hand it a tree and

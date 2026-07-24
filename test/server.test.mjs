@@ -1,7 +1,7 @@
 // Wire-level tests for the structure API: create board, include-existing, move, cycle guards.
 // Boots the real server against a temp boards dir and drives it over HTTP — no browser.
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, symlink, realpath, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, symlink, realpath, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -183,6 +183,25 @@ try {
     for (let i = 0; i < 20 && await up2(); i++) await new Promise(r => setTimeout(r, 100));
     ok(!(await up2()), 'daemon server stops on --stop');
     await rm(dir2, { recursive: true, force: true });
+  }
+
+  // --- credentials file: ~/.tilemon/credentials seeds TILEMON_TOKEN into the server's env ---
+  {
+    const P3 = 47825;
+    const home3 = await mkdtemp(join(tmpdir(), 'tilemon-home-'));
+    const boards3 = await mkdtemp(join(tmpdir(), 'tilemon-b3-'));
+    await mkdir(join(home3, '.tilemon'), { recursive: true });
+    await writeFile(join(home3, '.tilemon', 'credentials'), '# creds\nTILEMON_TOKEN=sekret-123\n');
+    const e3 = { ...process.env, HOME: home3, PORT: String(P3) };
+    delete e3.TILEMON_TOKEN;   // credentials file must be the ONLY source, so the loader isn't pre-empted
+    const srv3 = spawn('node', [SERVER, boards3], { env: e3, stdio: 'ignore' });
+    for (let i = 0; i < 50; i++) { try { await fetch(`http://localhost:${P3}/api/boards`); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
+    const post = (hdr) => fetch(`http://localhost:${P3}/api/status`, { method: 'POST', headers: { 'content-type': 'application/json', ...hdr }, body: JSON.stringify({ board: 'tilemon', path: 't', status: 'waiting' }) }).then(r => r.status);
+    ok(await post({}) === 401, 'credentials file: loaded token → unauthenticated write rejected (401)');
+    ok(await post({ authorization: 'Bearer sekret-123' }) === 200, 'credentials file: the loaded token authorises the write');
+    srv3.kill();
+    await rm(home3, { recursive: true, force: true });
+    await rm(boards3, { recursive: true, force: true });
   }
 
   // --- aggregate GET /api/state (no param) + ?glowing (subsumes /api/attention) ---

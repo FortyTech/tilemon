@@ -44,7 +44,7 @@ import { createEngine, slugOk } from './engine.js';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
-import { unlinkSync, realpathSync } from 'node:fs';
+import { readFileSync, unlinkSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -52,6 +52,23 @@ import { homedir } from 'node:os';
 const __dir = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 const hasFlag = f => argv.includes(f);
+
+// Credentials: the canonical, clean-safe home for TILEMON_TOKEN / TILEMON_URL — a dotenv-style file at
+// ~/.tilemon/credentials, next to the boards and OUTSIDE any git repo, so a stray `git clean` can never
+// wipe it. Loaded into process.env before TOKEN/CLIENT_BASE are read below; an already-set env var wins.
+(function loadCredentials() {
+  try {
+    for (const line of readFileSync(join(homedir(), '.tilemon', 'credentials'), 'utf8').split('\n')) {
+      const s = line.trim();
+      if (!s || s.startsWith('#')) continue;
+      const eq = s.indexOf('=');
+      if (eq < 1) continue;
+      const k = s.slice(0, eq).trim();
+      if (k.startsWith('TILEMON_') && process.env[k] === undefined)
+        process.env[k] = s.slice(eq + 1).trim().replace(/^["']|["']$/g, '');
+    }
+  } catch { /* no credentials file → nothing to load */ }
+})();
 
 const SUBCMD = ['flag', 'attention', 'resolve', 'reconcile', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
 // boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
