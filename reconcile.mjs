@@ -142,22 +142,17 @@ async function resolveBoard(base, dir) {
 // status). Used by the judge to match-and-update rather than duplicate, and to know valid targets.
 async function fetchInventory(base) {
   const out = { boards: [], dirBySlug: {}, tilesBySlug: {} };
-  let list = [];
   try {
-    const r = await fetch(`${base}/api/boards`);
-    if (r.ok) { const j = await r.json(); if (Array.isArray(j)) list = j; }   // 200-but-not-an-array can't throw the map below
+    const r = await fetch(`${base}/api/state`);   // AGGREGATE: every board + its resolved tree in ONE call
+    if (!r.ok) return out;
+    const j = await r.json();
+    const boards = Array.isArray(j.boards) ? j.boards : [];
+    out.boards = boards.map(b => ({ slug: b.slug, dir: b.dir }));
+    for (const b of boards) {
+      if (b.dir) out.dirBySlug[b.slug] = b.dir;
+      out.tilesBySlug[b.slug] = flattenTiles(b.tree || {});
+    }
   } catch { return out; }
-  out.boards = list.map(b => ({ slug: b.slug, dir: b.dir, items: b.items }));
-  for (const b of out.boards) if (b.dir) out.dirBySlug[b.slug] = b.dir;
-  // Pull tiles only for boards that actually have any (keeps the fetch + prompt small).
-  for (const b of out.boards) {
-    if (!b.items) { out.tilesBySlug[b.slug] = []; continue; }
-    try {
-      const r = await fetch(`${base}/api/state?board=${encodeURIComponent(b.slug)}`);
-      if (!r.ok) { out.tilesBySlug[b.slug] = []; continue; }
-      out.tilesBySlug[b.slug] = flattenTiles(await r.json());
-    } catch { out.tilesBySlug[b.slug] = []; }
-  }
   return out;
 }
 

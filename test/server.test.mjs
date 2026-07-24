@@ -185,6 +185,35 @@ try {
     await rm(dir2, { recursive: true, force: true });
   }
 
+  // --- aggregate GET /api/state (no param) + ?glowing (subsumes /api/attention) ---
+  {
+    await api('POST', '/api/board', { name: 'Agg A', slug: 'agg-a' });
+    await api('POST', '/api/board', { name: 'Agg B', slug: 'agg-b' });
+    await api('POST', '/api/status', { board: 'agg-a', path: 'x', status: 'blocked', note: 'boom' });
+    await api('POST', '/api/status', { board: 'agg-a', path: 'y', status: 'in_progress' });
+    await api('POST', '/api/status', { board: 'agg-b', path: 'z', status: 'waiting' });
+
+    const agg = (await api('GET', '/api/state')).json;
+    ok(Array.isArray(agg.boards), 'GET /api/state (no param) returns { boards: [...] }');
+    const a = agg.boards.find(b => b.slug === 'agg-a');
+    ok(a && a.tree && Array.isArray(a.tree.children), 'aggregate carries each board\'s resolved tree');
+    ok(agg.boards.some(b => b.slug === 'agg-b'), 'aggregate includes every board in one call');
+
+    const glowAll = (await api('GET', '/api/state?glowing=1')).json.items;
+    ok(glowAll.some(i => i.board === 'agg-a' && i.path === 'x' && i.status === 'blocked'), '?glowing returns waiting/blocked across ALL boards');
+    ok(glowAll.some(i => i.board === 'agg-b' && i.path === 'z' && i.status === 'waiting'), '?glowing spans boards');
+    ok(!glowAll.some(i => i.board === 'agg-a' && i.path === 'y'), '?glowing excludes in_progress');
+
+    const glowOne = (await api('GET', '/api/state?glowing=1&board=agg-a')).json.items;
+    ok(glowOne.length && glowOne.every(i => i.board === 'agg-a'), '?glowing&board= scopes to one board');
+
+    const bare = (await api('GET', '/api/state?board=agg-a')).json;
+    ok(bare.children && !bare.boards && !bare.items, '?board= still returns the bare tree (unchanged shape)');
+
+    const alias = (await api('GET', '/api/attention?board=agg-a')).json.items;
+    ok(alias.some(i => i.path === 'x'), '/api/attention still works as a deprecated alias');
+  }
+
 } finally {
   child.kill();
   await rm(dir, { recursive: true, force: true });

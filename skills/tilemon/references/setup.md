@@ -175,7 +175,7 @@ Instead they bracket your turn: **start** shows you what's glowing so you can mu
 **stop** makes you flip it back before you hand control back:
 
 - **`UserPromptSubmit` "start" hook** — fires the moment a prompt arrives, *before* work begins,
-  fetches the currently-glowing boxes (`GET /api/attention`) and prints them into your context. You
+  fetches the currently-glowing boxes (`GET /api/state?glowing=1`) and prints them into your context. You
   then MUTE the one you're picking up (set it `in_progress`) as your first action. Read-only,
   fire-and-forget with a hard timeout, so it can never add latency or hang the turn.
 - **`Stop` hook** — fires when you pause/hand back, and makes you flip any box you muted back to
@@ -194,7 +194,7 @@ let s = ''; process.stdin.on('data', c => (s += c)).on('end', async () => {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 800);   // cap the whole thing — the turn is never blocked
   try {
-    const r = await fetch(`${url}/api/attention`, { signal: ctl.signal });
+    const r = await fetch(`${url}/api/state?glowing=1`, { signal: ctl.signal });
     if (!r.ok) return;                                  // server down / error → show nothing
     const items = (await r.json()).items || [];
     if (!items.length) return;                          // nothing glowing → say nothing
