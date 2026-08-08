@@ -41,6 +41,7 @@
 
 import http from 'node:http';
 import { createEngine, slugOk } from './engine.js';
+import { runCollector, projectTiles, readFleet } from './collector.mjs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
@@ -70,7 +71,8 @@ const hasFlag = f => argv.includes(f);
   } catch { /* no credentials file → nothing to load */ }
 })();
 
-const SUBCMD = ['flag', 'attention', 'resolve', 'reconcile', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
+const SUBCMD = ['flag', 'attention', 'resolve', 'reconcile', 'collect', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
+const CC_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');   // where Claude Code writes jobs/ + sessions/ (the passive source)
 // boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
 // else the default ~/.tilemon. In subcommand mode the positionals belong to the command, not the dir.
 const BOARDS = (!SUBCMD && argv.find(a => !a.startsWith('-'))) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
@@ -321,7 +323,33 @@ const engine = createEngine({
     catch { return []; }
   },
 });
+// Serialize every board MUTATION (routes + the collector poll) so read-modify-write is atomic.
+// writeBoard alone only serialises the write step; without this a poll that reads before a human's
+// pin write lands, then writes after, would drop the pin. Reads (resolveBoard/listSlugs) stay free.
+let writeChain = Promise.resolve();
+const locked = fn => { const p = writeChain.then(fn, fn); writeChain = p.catch(() => {}); return p; };
+for (const m of ['status', 'weight', 'addNode', 'patchNode', 'removeNode', 'createBoard', 'moveNode', 'updateBoard', 'syncManaged']) {
+  const orig = engine[m].bind(engine);
+  engine[m] = (...a) => locked(() => orig(...a));
+}
 const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-side entry point
+
+// `tilemon collect [--dry-run]` — run the passive collector once against ~/.claude/jobs.
+// --dry-run prints the board it WOULD project and writes nothing; otherwise it reconciles.
+if (SUBCMD === 'collect') {
+  if (hasFlag('--dry-run')) {
+    const { byBoard, dropped } = projectTiles(readFleet(CC_DIR));
+    const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
+    console.log(`${tiles} live tiles across ${Object.keys(byBoard).length} board(s); would drop ${dropped.length} (done/dead)\n`);
+    for (const [b, ts] of Object.entries(byBoard).sort((a, z) => z[1].length - a[1].length)) {
+      console.log(`  ${b} (${ts.length})`);
+      for (const t of ts) console.log(`      [${t.status}] ${t.name.slice(0, 56)}\n          ${(t.note || '').slice(0, 90)}`);
+    }
+    process.exit(0);
+  }
+  const r = await runCollector({ engine, ccDir: CC_DIR, log: s => console.log(s) });
+  process.exit(r ? 0 : 1);
+}
 
 // Walk a resolved tree collecting the glowing (waiting/blocked) tiles, each stamped with `area` (its
 // share of the board = product of normalised sibling weights). Dedupes by owning board+path. Shared by
@@ -592,3 +620,22 @@ server.listen(PORT, async () => {
   console.log(`  boards    : http://localhost:${PORT}/api/boards`);
   console.log(TOKEN ? '  auth      : token required on writes' : '  auth      : OPEN (set TILEMON_TOKEN before exposing the port)');
 });
+
+// ---- passive collector poll loop ----
+// The board keeps ITSELF up to date: every tick we read Claude Code's own per-session state and
+// project the live sessions onto boards (no hook, no judge, no agent cooperation). Only runs for
+// the default machine-wide board (the jobs are machine-wide); disable with TILEMON_NO_COLLECT=1.
+const COLLECT = !process.env.TILEMON_NO_COLLECT && BOARDS === join(homedir(), '.tilemon');
+if (COLLECT) {
+  const every = Number(process.env.TILEMON_COLLECT_MS) || 5000;
+  let running = false;
+  const tick = async () => {
+    if (running) return;                          // never overlap a slow poll
+    running = true;
+    try { const r = await runCollector({ engine, ccDir: CC_DIR }); if (r && r.changed) broadcast(); }   // only on a real change — no 5s SSE spam
+    catch (e) { console.error('collect: ' + (e?.message || e)); }   // fail soft — a stale board beats a crashed daemon
+    finally { running = false; }
+  };
+  tick();                                         // once at startup
+  setInterval(tick, every).unref();               // don't hold the process open on this alone
+}

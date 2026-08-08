@@ -121,6 +121,47 @@ export function createEngine({ readBoard, writeBoard, listSlugs }) {
   return {
     includeReaches,
     resolveBoard,
+    listSlugs,                     // exposed for the collector's reconcile sweep
+
+    // ---- COLLECTOR reconcile: replace all top-level nodes this `origin` owns with `desired` ----
+    // The ownership invariant that keeps the passive board sane: the collector may only ever
+    // touch nodes it stamped with its own `origin` (e.g. 'session'). Everything else on the
+    // board — human-pinned tiles, tiles from another origin — is left exactly as it is. So a
+    // poll can add/update/remove its own session tiles freely and can NEVER delete a pin.
+    // `desired` is the full current set of owned top-level nodes (each will carry `origin`);
+    // absent means the board is created empty. Returns {added, updated, removed}. This is the
+    // one place the invariant lives, so both the file daemon and hosted inherit it identically.
+    async syncManaged(slug, origin, desired = []) {
+      if (!slugOk(slug)) return err(400, 'bad or missing board slug');
+      let board = await readBoard(slug);
+      const fresh = !board;
+      if (!board) board = { name: humanize(slug), visibility: 'private', source: 'native', children: [] };
+      if (isJira(board)) return err(409, 'board is a read-only jira source');
+      const kids = board.children || (board.children = []);
+      const keep = kids.filter(c => c.origin !== origin);            // pins + other origins: untouched
+      const keepIds = new Set(keep.map(c => c.id));
+      const wasOwned = new Map(kids.filter(c => c.origin === origin).map(c => [c.id, c]));
+      // stamp ownership; never let a managed id collide with a kept (pinned) node — board.js keys
+      // tiles by id, so a clash would shadow the pin. Suffix deterministically if it happens.
+      const takenByManaged = new Set();
+      const want = desired.map(n => {
+        let id = n.id;
+        while (keepIds.has(id) || takenByManaged.has(id)) id = id + '_';
+        takenByManaged.add(id);
+        return { ...n, id, origin };
+      });
+      let added = 0, changed = 0;
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      for (const n of want) {
+        const prev = wasOwned.get(n.id);
+        if (!prev) added++; else if (!same(prev, n)) changed++;
+      }
+      const removed = [...wasOwned.keys()].filter(id => !want.some(n => n.id === id)).length;
+      if (!fresh && added === 0 && changed === 0 && removed === 0) return { ok: true, added: 0, updated: 0, removed: 0 };
+      board.children = [...keep, ...want];                           // pins first, managed after
+      await writeBoard(slug, board);
+      return { ok: true, added, updated: changed, removed };
+    },
 
     // ---- AGENT write: upsert a dotted path (create board + missing nodes, born small) + status/note ----
     async status(slug, path, { status, note, name } = {}) {

@@ -16,6 +16,10 @@ where the data lives when your PC is off, and the two SPEC [LOCKED] points it su
 
 ## Status
 
+**v0.19.0 — the passive collector** (see the section below): the board now keeps itself current by
+reading Claude Code's own per-session job state; the hook + `claude -p` judge model is being retired
+(TIL-002). Rollout remaining: hosted sync path, board reset, hook removal.
+
 Multi-board swarm loop built and shipping. `npx tilemon` serves a directory of boards (default
 `~/.tilemon`, the machine-wide board; `--project` scopes to `./.tilemon`); agents `POST /api/status`
 to **upsert**, the board live-updates over SSE, includes render as navigable summary tiles.
@@ -61,6 +65,30 @@ via callbacks (`onWeightChange` / `onStatusChange`); the host decides where that
 source is the file (via `server.mjs`); a future hosted version is just another source
 (Neon) behind the same callbacks. Keep all data access on the adapter side of that seam —
 never let `board.js` reach for `fetch`/storage directly.
+
+## Passive collector — the board keeps itself current (v0.19.0)
+
+**The board is a *view over ground truth*, not a log of self-reports.** Claude Code maintains its
+own per-session state for its agent/fleet view (`~/.claude/jobs/<id>/state.json` — `state`
+working|blocked|done, `name`, `detail`, `needs`, `children` PRs — plus `sessions/<pid>.json`
+busy|idle liveness). `collector.mjs` reads it every few seconds (a daemon poll) and projects the
+**live** sessions onto their project boards. No Stop hook, no `claude -p` judge, no agent
+cooperation.
+
+- **A tile is a live session** — keyed by session short-id, routed to a project board by session
+  **name** (cwd is a fallback only; it's often the workspace root). It **decays** the moment the
+  session settles (`done`) or goes stale (no heartbeat) — so the board is bounded by live-session
+  count and cannot accrete (the failure mode that made the pushed board unusable: 223 flat tiles).
+- **Two tile kinds, by ownership.** Collector tiles are stamped `origin:'session'` and reconciled
+  via `engine.syncManaged(slug, origin, desired)` — which touches *only* nodes of that origin.
+  Any node without it is a human **pin**: it persists until the human marks it done and the
+  collector never touches it. Ephemeral session tiles + durable pins, on one board.
+- **`home` = includes** of boards that currently have tiles; the unroutable go to an `inbox`
+  board, never home root. Run it by hand with `tilemon collect [--dry-run]`.
+
+This **retires the hook model** (`reconcile.mjs` + the `UserPromptSubmit`/`Stop` hooks) — see
+TIL-002. `syncManaged` lives in `engine.js`, so hosted (tilemon-cloud) inherits the same
+ownership invariant.
 
 ## Capability split (the safety story)
 
