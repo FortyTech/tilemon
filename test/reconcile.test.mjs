@@ -38,14 +38,16 @@ await chmod(join(fakebin, 'claude'), 0o755);
 
 // run reconcile the way the Stop hook does: a fresh process, hook JSON on stdin, fake claude first on PATH
 function runReconcile({ args = [], stdin = '', env = {} } = {}) {
-  const e = { ...process.env, PATH: fakebin + ':' + process.env.PATH, TILEMON_URL: BASE };
+  const e = { ...process.env, PATH: fakebin + ':' + process.env.PATH, TILEMON_URL: BASE, TILEMON_TOKEN: '' };
   delete e.TILEMON_RECONCILER;            // don't let an ambient value trip the guard
   Object.assign(e, env);
   return spawnSync('node', [SERVER, 'reconcile', ...args], { input: stdin, encoding: 'utf8', env: e, cwd: work });
 }
 const decision = (arr) => ({ FAKE_CLAUDE_OUT: JSON.stringify(arr) });
 
-const server = spawn('node', [SERVER, boards], { env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
+// Clear ambient credentials so the spawned server runs OPEN (see server.test.mjs) — otherwise a
+// dev box with a real ~/.tilemon/credentials makes it demand auth and the unauthenticated setup 401s.
+const server = spawn('node', [SERVER, boards], { env: { ...process.env, PORT: String(PORT), TILEMON_TOKEN: '', TILEMON_URL: '', TILEMON_NO_COLLECT: '1' }, stdio: 'ignore' });
 
 try {
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/api/boards'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
