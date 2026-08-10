@@ -15,8 +15,9 @@ npx tilemon           # serves ~/.tilemon — one board for the whole machine (c
 directory of JSON boards. By default that's `~/.tilemon`, so **every local repo shares one board** —
 which is what a cross-project tool wants. Want a board scoped to just one repo instead? `npx tilemon
 --project` (serves `./.tilemon`), or point it at any explicit folder: `npx tilemon ./some-dir`.
-Point an always-on monitor at it. Agents flag status over HTTP (and can populate an empty board
-from scratch); you own the weights by dragging tiles.
+**The board keeps itself current** — a passive collector reads Claude Code's own per-session state
+and projects your live sessions onto it (no hooks, no agent cooperation; see *How the board stays
+current* below). You own the weights by dragging tiles.
 
 Run it detached so it outlives the terminal (or the agent) that started it — no extra tooling,
 just Node:
@@ -47,9 +48,10 @@ npm run demo        # serves ./examples/boards (a native board + a mounted one +
 - **Area = importance.** A tile's on-screen area is its share of attention. The total
   never grows, so weighting one thing up *takes* space from its siblings. You spend
   importance like a budget.
-- **Weight is yours; status is the agent's.** You set importance by dragging (or the
-  size slider), deliberately. Agents set status — `todo`, `in_progress`, `waiting` (needs your
-  input), `blocked` (something's wrong), `done`.
+- **Weight is yours; status is read from your sessions.** You set importance by dragging (or the
+  size slider), deliberately. Status — `in_progress`, `waiting` (needs your input), `blocked`
+  (something's wrong), `done` — is projected mechanically from Claude Code's session state by the
+  collector, not something agents report.
 - **Any item can carry a status, at any depth.** It's a uniformly recursive tree — an
   item may contain items *and* hold its own status. A whole group can be `blocked` (the
   branch is stuck) without lying about a child.
@@ -62,58 +64,31 @@ npm run demo        # serves ./examples/boards (a native board + a mounted one +
   **done** toggle brings them back (dimmed) so you can re-open one — hiding never means
   losing.
 
-## How agents update it
+## How the board stays current — the passive collector
 
-To let your coding agent feed the board unprompted, install the skill:
-
-```
-npx skills add FortyTech/tilemon        # into this project's ./.claude/skills/
-npx skills add -g FortyTech/tilemon     # or globally, for every project
-```
-
-The skill teaches the agent *when* to flag (block/finish) and how to bootstrap a board — but
-it's not required: any agent told "there's a TileMon board at localhost:4000" can use the API
-directly. The whole integration is one POST, scoped to a board. It **upserts** — if the board or the node doesn't exist yet,
-it's created (born small) — and it can *only* set status/note, never your weights or
-structure (a different endpoint, with no access to weight).
+You don't tend the board and agents don't report to it. A **standalone collector** reads Claude
+Code's *own* per-session state (`~/.claude/jobs/*/state.json` — which already records whether each
+session is working, waiting on you, blocked, or done, plus what it needs) and projects your **live
+sessions** onto the board. No hooks, no agent cooperation, no `claude -p` judge — a plain,
+deterministic read-and-reconcile.
 
 ```bash
-node examples/agent.mjs webapp api.refactor-auth      # a toy agent: in_progress → blocked → done
-node examples/flag.mjs  webapp api.refactor-auth blocked "need the staging DB password"
-# or directly:
-curl -X POST http://localhost:4000/api/status \
-  -H 'content-type: application/json' \
-  -d '{"board":"webapp","path":"api.refactor-auth","status":"blocked","note":"need the staging DB password"}'
+# key + board URL live in ~/.tilemon/credentials (TILEMON_URL / TILEMON_TOKEN)
+tilemon collect --dry-run     # print the board it WOULD build from your sessions; write nothing
+tilemon collect --loop &      # run it: reconcile every 60s (--interval to change)
 ```
 
-## Attention rules (`attention.md`)
+- **A tile is a live session** — routed to its project board by the session's name, gone the moment
+  the session ends. The board can't accrete; it only ever shows what's live.
+- **Target is the sink.** With `TILEMON_URL` set it POSTs to the hosted app (`/api/collect`); unset,
+  it writes a local board directly. Same collector either way — run it next to Claude Code and point
+  it at tilemon.com, or at your own `npx tilemon` server.
+- **Pins are yours.** A tile you add in the UI persists until you mark it done; the collector manages
+  only its own session tiles and never touches a pin.
 
-You decide what deserves your attention — write it in plain English in `~/.tilemon/attention.md`
-(seeded with a template on first run). Agents working in a place read it and push status so the
-things that need *you* glow:
-
-```
-# --- global ---
-- Uncommitted or unpushed changes in a repo → waiting (nag me until it's clean).
-- A client email unanswered >2 days → waiting.
-
-# --- board: acme-portal ---
-- Failing CI → blocked.
-- Any obvious security issue → blocked.
-```
-
-The rules are **yours** — a personal lens, like your weights, never baked into the shared board —
-and they're honoured by **whoever's already working there**, evaluating them with their own tools.
-TileMon prescribes no mechanism and ships no rule-specific tooling: **sending updates to TileMon
-(`POST /api/status`) is the whole interface**, and how you generate those updates — an agent working
-live, a hook, CI, a scheduled job — is up to you. Scope with `# board: <slug>` / `# node: <board>.<path>`
-sections; the rest is global.
-
-**Optional — a Claude Code `Stop` hook.** So the board stays current without you (or an agent)
-remembering, setup can add a project `Stop` hook that, when the agent pauses for input, nudges it once
-to apply `attention.md` and push updates before it stops. It's offered opt-out at setup, scoped to the
-project's `.claude/settings.json`, and removable by deleting the `Stop` entry. Claude-Code-specific;
-everything else just pushes via `POST /api/status`.
+Full setup (hosted or local) is in [`skills/tilemon/references/setup.md`](./skills/tilemon/references/setup.md).
+The `POST /api/status` route still exists for a non-Claude agent that wants to report directly, but
+it's no longer the primary path — the collector is.
 
 ## Boards & file format
 
@@ -149,7 +124,8 @@ Edit a board file directly and it live-updates — the server watches the direct
 | `GET /api/boards` | — | list boards |
 | `GET /api/state?board=<slug>` | — | one board's resolved tree |
 | `GET /api/events` | — | Server-Sent Events; `change` on any write |
-| `POST /api/status` | **agents** | `{board, path, status, note?, name?}` — upsert; status/note only |
+| `POST /api/collect` | **the collector** | `{origin?, boards:{slug:[nodes]}}` — reconcile the collector-owned tiles across boards in one call (hosted); leaves human pins untouched |
+| `POST /api/status` | direct/legacy | `{board, path, status, note?, name?}` — upsert one node's status/note (the pre-passive self-report path; still works for non-Claude agents) |
 | `POST /api/weight` | **you / UI** | `{board, path, weight}` — weight only, node must exist |
 | `POST /api/board` | **you / UI** | `{name, slug?, source?}` — create a bare board (placed nowhere) → `{slug}` |
 | `POST /api/node` | **you / UI** | `{board, path, kind, name?, target?}` — add a plain item (`kind:"item"`) or an include of an existing board (`kind:"include"`, `target` = its slug) |
@@ -159,7 +135,8 @@ Edit a board file directly and it live-updates — the server watches the direct
 
 Structure is assembled from clean primitives: **create a board once** (`/api/board`), **reference it**
 wherever you like (`/api/node kind:"include"`), and **rearrange references** (`/api/move`). A *bucket*
-is just an item you add children into. Agents never touch these — they only `POST /api/status`.
+is just an item you add children into. These are the human's structure surface (via the UI); the
+collector only reconciles its own session tiles and never reshapes them.
 
 Set `TILEMON_TOKEN` to require `Authorization: Bearer <token>` on the write routes
 before exposing the port beyond a trusted network.
