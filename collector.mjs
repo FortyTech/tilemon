@@ -113,36 +113,73 @@ export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LI
 }
 
 /**
- * Reconcile the projection onto boards through the engine. Owns only origin:'session' nodes on
- * every board it touches; rebuilds `home` as includes of the boards that currently have tiles.
+ * Turn a projection into the full desired-state map { boardSlug: [managed nodes] } including the
+ * empties (boards that exist but lost all their sessions → []) and `home` (includes of boards that
+ * have tiles). `existing` is the current board list from the sink, so dropped boards get cleared.
  */
-export async function runCollector({ engine, ccDir, fleet, now = Date.now(), log = () => {} }) {
-  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now);
+function planBoards(byBoard, existing) {
   const desired = Object.keys(byBoard);
-
-  // union of boards that currently exist and boards we now want tiles on — so a board that lost
-  // all its live sessions gets its session tiles cleared (syncManaged with []).
-  const existing = (await engine.listSlugs()).filter(s => !SKIP_BOARDS.has(s));
   const touch = [...new Set([...existing, ...desired])].filter(s => !SKIP_BOARDS.has(s));
+  const withTiles = touch.filter(s => (byBoard[s] || []).length).sort();
+  const plan = {};
+  for (const slug of touch) plan[slug] = byBoard[slug] || [];
+  plan.home = withTiles.map(slug => ({ id: slug, name: humanize(slug), weight: 1, include: slug }));
+  return plan;
+}
 
-  let boardsWithTiles = [];
-  let changed = 0;                                        // count real mutations, so the caller only broadcasts on change
-  for (const slug of touch) {
-    const nodes = byBoard[slug] || [];
-    const r = await engine.syncManaged(slug, ORIGIN, nodes);
-    if (r.error) { log(`collect: ${slug} skipped (${r.error})`); continue; }
-    changed += (r.added + r.updated + r.removed);
-    if (nodes.length) boardsWithTiles.push(slug);
+// A SINK is where tiles land: `listSlugs()` + `sync(slug, origin, nodes) -> {added,updated,removed}`.
+// The engine sink writes local board files in-process; the remote sink POSTs to a hosted /api/collect.
+// Same projection either way — local `npx tilemon`, or the standalone bridge feeding tilemon.com.
+
+/** Local sink: reconcile straight through an in-process engine (file store). */
+export const engineSink = engine => ({
+  listSlugs: () => engine.listSlugs(),
+  sync: (slug, origin, nodes) => engine.syncManaged(slug, origin, nodes),
+});
+
+/** Remote sink: one POST to /api/collect applies the whole plan server-side (atomic per board). */
+export function remoteSink({ url, token, fetchImpl = fetch }) {
+  const base = url.replace(/\/+$/, '');
+  const headers = { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) };
+  return {
+    async listSlugs() {
+      const r = await fetchImpl(`${base}/api/boards`, { headers });
+      if (!r.ok) throw new Error(`GET /api/boards -> ${r.status}`);
+      const b = await r.json();
+      return Array.isArray(b) ? b.map(x => x.slug) : [];
+    },
+    // remote applies the FULL plan in one request; we hand each board through here, but batch at runCollector
+    _postPlan: async (origin, plan) => {
+      const r = await fetchImpl(`${base}/api/collect`, { method: 'POST', headers, body: JSON.stringify({ origin, boards: plan }) });
+      if (!r.ok) throw new Error(`POST /api/collect -> ${r.status} ${await r.text().catch(() => '')}`);
+      return r.json();
+    },
+  };
+}
+
+/**
+ * Read the fleet, project the live sessions, and reconcile them onto the target. Owns only
+ * origin:'session' nodes; human pins are never touched. `sink` is engineSink (local) or remoteSink.
+ */
+export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(), log = () => {} }) {
+  sink = sink || engineSink(engine);
+  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now);
+  const existing = (await sink.listSlugs()).filter(s => !SKIP_BOARDS.has(s));
+  const plan = planBoards(byBoard, existing);
+
+  let changed = 0;
+  if (sink._postPlan) {                                   // remote: one batched request
+    const res = await sink._postPlan(ORIGIN, plan);
+    changed = res?.changed || 0;
+  } else {                                                // local: per-board through the engine
+    for (const [slug, nodes] of Object.entries(plan)) {
+      const r = await sink.sync(slug, ORIGIN, nodes);
+      if (r.error) { log(`collect: ${slug} skipped (${r.error})`); continue; }
+      changed += (r.added + r.updated + r.removed);
+    }
   }
 
-  // home = one include per board that currently has session tiles (alphabetical, stable order)
-  const includes = boardsWithTiles.sort().map(slug => ({
-    id: slug, name: humanize(slug), weight: 1, include: slug,
-  }));
-  const rh = await engine.syncManaged('home', ORIGIN, includes);
-  if (!rh.error) changed += (rh.added + rh.updated + rh.removed);
-
-  const total = includes.reduce((n, i) => n + (byBoard[i.id]?.length || 0), 0);
-  if (changed) log(`collect: ${total} live tiles across ${includes.length} board(s); dropped ${dropped.length} (done/dead)`);
-  return { boards: boardsWithTiles.length, tiles: total, dropped: dropped.length, changed };
+  const boards = plan.home.length, tiles = plan.home.reduce((n, i) => n + (byBoard[i.id]?.length || 0), 0);
+  if (changed) log(`collect: ${tiles} live tile(s) across ${boards} board(s); dropped ${dropped.length} (done/dead)`);
+  return { boards, tiles, dropped: dropped.length, changed };
 }

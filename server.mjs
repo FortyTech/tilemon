@@ -41,7 +41,7 @@
 
 import http from 'node:http';
 import { createEngine, slugOk } from './engine.js';
-import { runCollector, projectTiles, readFleet } from './collector.mjs';
+import { runCollector, projectTiles, readFleet, engineSink, remoteSink } from './collector.mjs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
@@ -334,8 +334,12 @@ for (const m of ['status', 'weight', 'addNode', 'patchNode', 'removeNode', 'crea
 }
 const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-side entry point
 
-// `tilemon collect [--dry-run]` — run the passive collector once against ~/.claude/jobs.
-// --dry-run prints the board it WOULD project and writes nothing; otherwise it reconciles.
+// `tilemon collect [--dry-run] [--loop] [--interval <s>]` — the passive collector: read
+// ~/.claude/jobs and project the live sessions onto boards. The standalone file→board bridge.
+//   • target = TILEMON_URL if set (POST /api/collect on the hosted app) else the local file board.
+//   • --dry-run  prints the board it WOULD build, writes nothing.
+//   • --loop     stay running and re-collect every --interval seconds (default 60); this is the
+//                always-on bridge you run next to Claude Code — no local board server required.
 if (SUBCMD === 'collect') {
   if (hasFlag('--dry-run')) {
     const { byBoard, dropped } = projectTiles(readFleet(CC_DIR));
@@ -347,7 +351,18 @@ if (SUBCMD === 'collect') {
     }
     process.exit(0);
   }
-  const r = await runCollector({ engine, ccDir: CC_DIR, log: s => console.log(s) });
+  const remote = !!process.env.TILEMON_URL;
+  const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
+  const once = () => runCollector({ sink, ccDir: CC_DIR, log: s => console.log(s) })
+    .catch(e => { console.error('collect: ' + (e?.message || e)); return null; });   // fail soft — a stale board beats a crash
+  if (hasFlag('--loop')) {
+    const secs = Number(parseOpts(cmdArgs).opts.interval) || 60;
+    console.log(`tilemon collect --loop → ${remote ? CLIENT_BASE : BOARDS}  (every ${secs}s)`);
+    await once();
+    setInterval(once, secs * 1000);
+    await new Promise(() => {});   // standalone daemon: stay alive on the interval, never fall through to the server
+  }
+  const r = await once();
   process.exit(r ? 0 : 1);
 }
 
@@ -620,22 +635,3 @@ server.listen(PORT, async () => {
   console.log(`  boards    : http://localhost:${PORT}/api/boards`);
   console.log(TOKEN ? '  auth      : token required on writes' : '  auth      : OPEN (set TILEMON_TOKEN before exposing the port)');
 });
-
-// ---- passive collector poll loop ----
-// The board keeps ITSELF up to date: every tick we read Claude Code's own per-session state and
-// project the live sessions onto boards (no hook, no judge, no agent cooperation). Only runs for
-// the default machine-wide board (the jobs are machine-wide); disable with TILEMON_NO_COLLECT=1.
-const COLLECT = !process.env.TILEMON_NO_COLLECT && BOARDS === join(homedir(), '.tilemon');
-if (COLLECT) {
-  const every = Number(process.env.TILEMON_COLLECT_MS) || 5000;
-  let running = false;
-  const tick = async () => {
-    if (running) return;                          // never overlap a slow poll
-    running = true;
-    try { const r = await runCollector({ engine, ccDir: CC_DIR }); if (r && r.changed) broadcast(); }   // only on a real change — no 5s SSE spam
-    catch (e) { console.error('collect: ' + (e?.message || e)); }   // fail soft — a stale board beats a crashed daemon
-    finally { running = false; }
-  };
-  tick();                                         // once at startup
-  setInterval(tick, every).unref();               // don't hold the process open on this alone
-}

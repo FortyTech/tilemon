@@ -71,7 +71,7 @@ never let `board.js` reach for `fetch`/storage directly.
 **The board is a *view over ground truth*, not a log of self-reports.** Claude Code maintains its
 own per-session state for its agent/fleet view (`~/.claude/jobs/<id>/state.json` — `state`
 working|blocked|done, `name`, `detail`, `needs`, `children` PRs — plus `sessions/<pid>.json`
-busy|idle liveness). `collector.mjs` reads it every few seconds (a daemon poll) and projects the
+busy|idle liveness). `collector.mjs` reads it (a standalone `collect --loop`, default 60s) and projects the
 **live** sessions onto their project boards. No Stop hook, no `claude -p` judge, no agent
 cooperation.
 
@@ -84,7 +84,14 @@ cooperation.
   Any node without it is a human **pin**: it persists until the human marks it done and the
   collector never touches it. Ephemeral session tiles + durable pins, on one board.
 - **`home` = includes** of boards that currently have tiles; the unroutable go to an `inbox`
-  board, never home root. Run it by hand with `tilemon collect [--dry-run]`.
+  board, never home root.
+
+**Standalone bridge, not a server feature.** The collector is a thin local process — `tilemon
+collect --loop` — that reads `~/.claude` and reconciles onto a **sink**: the local file board
+(`engineSink`) for `npx tilemon` users, or a hosted app via `remoteSink` → `POST /api/collect`
+when `TILEMON_URL` is set. So the machine that runs Claude Code runs *only* this bridge; the board
+you look at is the hosted one. No local board server required (the cloud can't read your `~/.claude`,
+so a local process is unavoidable — this is it). `tilemon collect --dry-run` prints without writing.
 
 This **retires the hook model** (`reconcile.mjs` + the `UserPromptSubmit`/`Stop` hooks) — see
 TIL-002. `syncManaged` lives in `engine.js`, so hosted (tilemon-cloud) inherits the same

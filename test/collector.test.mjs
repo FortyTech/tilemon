@@ -1,6 +1,6 @@
 // collector.test.mjs — the passive collector: projection (decay/routing/status) + the ownership
 // invariant that keeps the board sane (session tiles reconcile; human pins are never touched).
-import { projectTiles, runCollector } from '../collector.mjs';
+import { projectTiles, runCollector, remoteSink } from '../collector.mjs';
 import { createEngine } from '../engine.js';
 
 let passed = 0, failed = 0;
@@ -115,6 +115,30 @@ async function memEngine(seed = {}) {
   eq(boards.get('twigface').children.some(c => c.origin === 'session'), true, 'tile moved to new board');
   eq(boards.get('home').children.some(c => c.include === 'twigface'), true, 'home follows the move');
   eq(boards.get('home').children.some(c => c.include === 'doefin'), false, 'home drops the emptied board');
+}
+
+// ---- remote sink: one GET /api/boards + one POST /api/collect carrying the whole plan ----
+{
+  const calls = [];
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : null, auth: opts.headers?.authorization });
+    if (url.endsWith('/api/boards')) return { ok: true, json: async () => [{ slug: 'doefin' }, { slug: 'stale-board' }] };
+    if (url.endsWith('/api/collect')) return { ok: true, json: async () => ({ ok: true, changed: 3 }) };
+    return { ok: false, status: 404, text: async () => 'nope' };
+  };
+  const sink = remoteSink({ url: 'https://www.tilemon.com/', token: 'k', fetchImpl });
+  const f = fleet(job({ daemonShort: 'r', name: 'DOEFIN - x', state: 'blocked' }));
+  const res = await runCollector({ sink, fleet: f, now: NOW });
+
+  const boardsCall = calls.find(c => c.url.endsWith('/api/boards'));
+  const collectCall = calls.find(c => c.url.endsWith('/api/collect'));
+  eq(boardsCall.auth, 'Bearer k', 'remote sink sends the bearer token');
+  eq(collectCall.method, 'POST', 'remote posts to /api/collect');
+  eq(collectCall.body.origin, 'session', 'payload carries the origin');
+  eq(collectCall.body.boards.doefin.length, 1, 'doefin tile in the plan');
+  eq(collectCall.body.boards['stale-board'], [], 'a board that lost its sessions is sent empty (gets cleared)');
+  eq(collectCall.body.boards.home.some(i => i.include === 'doefin'), true, 'home includes carried in the same plan');
+  eq(res.changed, 3, 'runCollector reports the server-side change count');
 }
 
 console.log(`collector: ${passed} passed, ${failed} failed`);
