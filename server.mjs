@@ -341,8 +341,11 @@ const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-si
 //   • --loop     stay running and re-collect every --interval seconds (default 60); this is the
 //                always-on bridge you run next to Claude Code — no local board server required.
 if (SUBCMD === 'collect') {
+  const remote = !!process.env.TILEMON_URL;
+  const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
   if (hasFlag('--dry-run')) {
-    const { byBoard, dropped } = projectTiles(readFleet(CC_DIR));
+    const knownSlugs = await sink.listSlugs().catch(() => []);   // route against the real boards, so the preview is accurate
+    const { byBoard, dropped } = projectTiles(readFleet(CC_DIR), Date.now(), { knownSlugs });
     const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
     console.log(`${tiles} live tiles across ${Object.keys(byBoard).length} board(s); would drop ${dropped.length} (done/dead)\n`);
     for (const [b, ts] of Object.entries(byBoard).sort((a, z) => z[1].length - a[1].length)) {
@@ -351,8 +354,6 @@ if (SUBCMD === 'collect') {
     }
     process.exit(0);
   }
-  const remote = !!process.env.TILEMON_URL;
-  const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
   const once = () => runCollector({ sink, ccDir: CC_DIR, log: s => console.log(s) })
     .catch(e => { console.error('collect: ' + (e?.message || e)); return null; });   // fail soft — a stale board beats a crash
   if (hasFlag('--loop')) {

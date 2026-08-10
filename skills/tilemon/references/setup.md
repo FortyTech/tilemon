@@ -41,10 +41,35 @@ the one command. `--interval <seconds>` changes the cadence (default 60).
 
 ## Routing — how a session lands on the right board
 
-The collector routes each session to a board by its **name** (e.g. a session named "DOEFIN — fix
-tests" → the `doefin` board), falling back to its working directory, else an `inbox` board. Project
-boards are created on demand, and `home` is rebuilt as a set of includes over the boards that have
-live tiles. If sessions collect in `inbox`, give them a recognisable project prefix in the name.
+Routing is off the **session name**, which you control. Name every session:
+
+```
+[<importance> - ]<PROJECT> - <description>       e.g.  MED - FORTYTECH - adfin outreach
+```
+
+The collector splits on ` - `, drops a leading importance token (`LOW`/`MED`/`HIGH`), takes the next
+token as the **project**, and uses the rest as the tile's **description** (its label). Working
+directory is **not** used — sessions launched from a shared root would misroute, so the name is the
+only signal.
+
+Matching is **strict**: the project token and the board slugs are both normalised (lowercase, drop
+dashes) and must match exactly — no alias table. The dash-strip is the only fuzz, so `FORTYTECH` →
+`forty-tech` and `FREEMERCHMAKER` → `free-merch-maker` match automatically. A token that matches no
+board goes to **`inbox`** — your cue to rename the session (or add the board). True abbreviations
+(`FFF`, `META`) won't match `freeing-female-founders` / `forty-workspace`; spell them out, or name
+the board to match your habit.
+
+## Buckets & the overview (`home`) — your persistent structure
+
+`home` and its buckets (Products / Clients / Internal / …) are **yours**, seeded once and persistent —
+the collector **never** rebuilds them. Each project is a board; buckets are boards that `include`
+the project boards; `home` includes the buckets. You drag to size and regroup. The collector only
+maintains the live **session tiles** on project boards; heat rolls up through the includes, so a
+blocked session lights its project → its bucket → the overview, automatically.
+
+Seed it once from your project manifest (e.g. `projects.yml`): a board per project, your buckets, the
+includes, plus `inbox` on `home`. After that it's stable — a new project shows up in `inbox`; file it
+into a bucket and add it to the manifest. (Weights stay equal until you drag; importance is yours.)
 
 ## Local-only (no cloud)
 

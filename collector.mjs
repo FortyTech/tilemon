@@ -21,23 +21,34 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { humanize, slugify, slugOk } from './engine.js';
+import { slugify } from './engine.js';
 
 const ORIGIN = 'session';
 const LIVE_MS = 20 * 60 * 1000;         // live if the session heartbeat within 20 min
-const SKIP_BOARDS = new Set(['home', 'tutorial']);   // home is built from includes; tutorial is fresh-install content
+const INBOX = 'inbox';                                 // sessions whose project token matches no board
+const PRIORITY_TOKEN = /^(low|med|medium|high|z)$/i;   // dropped leading importance labels
 
-// name-prefix → project board slug. The reliable routing key is the session NAME, not cwd
-// (cwd is often the workspace root or a stale spawn dir). Extend as projects are added/renamed.
-const PREFIX = {
-  doefin: 'doefin', blastgeist: 'blastgeist', blastguist: 'blastgeist',
-  toonwalk: 'twigface', twigface: 'twigface', tilemon: 'tilemon-app',
-  fortytech: 'forty-tech', fff: 'freeing-female-founders', vidifai: 'vidifai',
-  chessku: 'chessku', noughtle: 'noughtle', 'social-content': 'social-content',
-  eulogy: 'eulogy-song', 'gap-form': 'gap-form', gapform: 'gap-form',
-  meta: 'forty-workspace', 'forty-workspace': 'forty-workspace', workspace: 'forty-workspace',
-};
-const PRIORITY_TOKEN = /^(low|med|medium|high|z)$/i;   // dropped leading priority labels
+// The human names every session `[<importance> - ]<PROJECT> - <description>`. We split on " - ":
+// drop a leading importance token, the next token is the PROJECT (routes to a board), and the rest
+// is the DESCRIPTION (the tile's label). Only the first two tokens are structural, so a description
+// containing " - " stays intact. See references/setup.md.
+function parseName(name) {
+  const parts = String(name || '').split(/\s+-\s+/).map(s => s.trim()).filter(Boolean);
+  let i = 0;
+  if (parts[i] && PRIORITY_TOKEN.test(parts[i])) i++;   // drop importance if present
+  const project = parts[i] || '';
+  const description = parts.slice(i + 1).join(' - ');
+  return { project, description };
+}
+
+// Routing is STRICT: normalize the project token and every real board slug the same way
+// (lowercase, drop non-alphanumerics) and require an exact match — no alias table. The dash-strip
+// is the only fuzz, so `FORTYTECH`→`forty-tech` and `FREEMERCHMAKER`→`free-merch-maker` just match.
+// A token that matches no board goes to `inbox` (rename the session to fix it).
+const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function routeBoard(project, slugByNorm) {
+  return slugByNorm.get(norm(project)) || INBOX;
+}
 
 const readJSON = p => { try { return JSON.parse(readFileSync(p, 'utf8')); } catch { return null; } };
 
@@ -63,30 +74,17 @@ export function readFleet(ccDir) {
   return { jobs, sessions };
 }
 
-function routeBoard(job) {
-  const parts = String(job.name || '').split(/\s*[-—]\s*/).map(s => s.trim());
-  for (const p of parts) {                                   // first name-part that maps wins (skips LOW/HIGH/…)
-    if (PRIORITY_TOKEN.test(p)) continue;
-    const key = p.toLowerCase();
-    if (PREFIX[key]) return PREFIX[key];
-    break;                                                   // only the leading meaningful token routes
-  }
-  const cwd = String(job.cwd || '');
-  const m = cwd.match(/repos\/([a-z0-9][a-z0-9-]*)/i);
-  if (m && slugOk(m[1])) return m[1];
-  if (cwd.replace(/\/+$/, '').endsWith('/forty-workspace')) return 'forty-workspace';
-  if (/doefin/i.test(cwd)) return 'doefin';
-  return 'inbox';                                            // unroutable → inbox board, never home root
-}
-
 const shortId = job =>
   job.daemonShort || (typeof job.sessionId === 'string' ? job.sessionId.slice(0, 8) : slugify(job.name || 'session'));
 
 /**
  * Pure projection: fleet → { boardSlug: [tileNode, …] }. Only LIVE, non-done sessions become
- * tiles (decay). Each tile is a top-level node the collector owns.
+ * tiles (decay). `knownSlugs` is the set of real board slugs to route against (strict match; a
+ * project token that matches none → `inbox`). Each tile's LABEL is the description parsed from the
+ * session name; its NOTE is the harness's live status (`needs`/`detail`).
  */
-export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LIVE_MS } = {}) {
+export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LIVE_MS, knownSlugs = [] } = {}) {
+  const slugByNorm = new Map(knownSlugs.map(s => [norm(s), s]));   // normalized slug → real slug
   const byBoard = {};
   const dropped = [];
   for (const job of jobs) {
@@ -96,34 +94,34 @@ export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LI
       const live = (now - beat) < liveMs;
       if (job.state === 'done' || !live) { dropped.push(job); continue; }   // decay: dead or settled
       const status = job.state === 'blocked' ? 'waiting' : 'in_progress';   // working → in_progress
+      const { project, description } = parseName(job.name);
       const prs = (job.children || []).filter(c => c.kind === 'pr').length;
       let note = (job.needs || job.detail || '').toString().replace(/\s+/g, ' ').trim();
       if (prs) note = (note ? note + ' ' : '') + `(${prs} PR${prs === 1 ? '' : 's'})`;
       const node = {
         id: 's-' + shortId(job),
-        name: String(job.name || job.intent || 'session').slice(0, 120),
+        name: (description || project || job.intent || 'session').toString().slice(0, 120),  // the DESCRIPTION is the label
         // seen = the session's own heartbeat, NOT now — so an idle poll yields byte-identical
         // tiles and syncManaged skips the write (no per-poll file churn / SSE spam).
         weight: 1, status, note, seen: beat || now, origin: ORIGIN, sessionId: job.sessionId,
       };
-      (byBoard[routeBoard(job)] ||= []).push(node);
+      (byBoard[routeBoard(project, slugByNorm)] ||= []).push(node);
     } catch { dropped.push(job); }   // one malformed job must never abort the whole poll
   }
   return { byBoard, dropped };
 }
 
 /**
- * Turn a projection into the full desired-state map { boardSlug: [managed nodes] } including the
- * empties (boards that exist but lost all their sessions → []) and `home` (includes of boards that
- * have tiles). `existing` is the current board list from the sink, so dropped boards get cleared.
+ * Build the desired-state map { boardSlug: [managed nodes] }. Every board that has tiles now, plus
+ * every existing board (swept with [] so one that lost all its sessions gets cleared). There is NO
+ * `home` rebuild — `home` and the buckets are the human's seeded, persistent structure (from
+ * projects.yml); the collector only maintains session tiles on project boards (+ `inbox`) and clears
+ * `origin:'session'` from everything else — a no-op for a board that never had any (buckets, home).
  */
 function planBoards(byBoard, existing) {
-  const desired = Object.keys(byBoard);
-  const touch = [...new Set([...existing, ...desired])].filter(s => !SKIP_BOARDS.has(s));
-  const withTiles = touch.filter(s => (byBoard[s] || []).length).sort();
+  const touch = [...new Set([...existing, ...Object.keys(byBoard)])].filter(s => s !== 'tutorial');
   const plan = {};
   for (const slug of touch) plan[slug] = byBoard[slug] || [];
-  plan.home = withTiles.map(slug => ({ id: slug, name: humanize(slug), weight: 1, include: slug }));
   return plan;
 }
 
@@ -163,8 +161,8 @@ export function remoteSink({ url, token, fetchImpl = fetch }) {
  */
 export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(), log = () => {} }) {
   sink = sink || engineSink(engine);
-  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now);
-  const existing = (await sink.listSlugs()).filter(s => !SKIP_BOARDS.has(s));
+  const existing = await sink.listSlugs();                              // the real boards to route against
+  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now, { knownSlugs: existing });
   const plan = planBoards(byBoard, existing);
 
   let changed = 0;
@@ -179,7 +177,8 @@ export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(
     }
   }
 
-  const boards = plan.home.length, tiles = plan.home.reduce((n, i) => n + (byBoard[i.id]?.length || 0), 0);
-  if (changed) log(`collect: ${tiles} live tile(s) across ${boards} board(s); dropped ${dropped.length} (done/dead)`);
-  return { boards, tiles, dropped: dropped.length, changed };
+  const withTiles = Object.values(byBoard).filter(a => a.length).length;
+  const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
+  if (changed) log(`collect: ${tiles} live tile(s) across ${withTiles} board(s); dropped ${dropped.length} (done/dead)`);
+  return { boards: withTiles, tiles, dropped: dropped.length, changed };
 }
