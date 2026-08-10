@@ -30,9 +30,9 @@ const dir = await mkdtemp(join(tmpdir(), 'tilemon-test-'));
 // Isolate from the dev machine: server.mjs loads ~/.tilemon/credentials into the env, so on a
 // box that has a real TILEMON_TOKEN (hosted setup) the spawned test server would demand auth and
 // every unauthenticated write here would 401. Clear the credential vars so we always exercise the
-// open local server, and disable the collector poll (irrelevant to these wire tests).
+// open local server.
 const child = spawn('node', [SERVER, dir], {
-  env: { ...process.env, PORT: String(PORT), TILEMON_TOKEN: '', TILEMON_URL: '', TILEMON_NO_COLLECT: '1' },
+  env: { ...process.env, PORT: String(PORT), TILEMON_TOKEN: '', TILEMON_URL: '' },
   stdio: 'ignore',
 });
 

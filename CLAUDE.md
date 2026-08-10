@@ -83,8 +83,11 @@ cooperation.
   via `engine.syncManaged(slug, origin, desired)` — which touches *only* nodes of that origin.
   Any node without it is a human **pin**: it persists until the human marks it done and the
   collector never touches it. Ephemeral session tiles + durable pins, on one board.
-- **`home` = includes** of boards that currently have tiles; the unroutable go to an `inbox`
-  board, never home root.
+- **`home` and the buckets are the human's** — seeded once and persistent; the collector **never**
+  rebuilds them. It only maintains session tiles on project boards; the unroutable go to an `inbox`
+  board (never home root). Heat rolls up through the human's includes automatically. Routing parses
+  the session name via a configurable regex (`~/.tilemon/config.json`), then strict-matches the
+  project against real board slugs.
 
 **Standalone bridge, not a server feature.** The collector is a thin local process — `tilemon
 collect --loop` — that reads `~/.claude` and reconciles onto a **sink**: the local file board

@@ -47,7 +47,7 @@ const decision = (arr) => ({ FAKE_CLAUDE_OUT: JSON.stringify(arr) });
 
 // Clear ambient credentials so the spawned server runs OPEN (see server.test.mjs) — otherwise a
 // dev box with a real ~/.tilemon/credentials makes it demand auth and the unauthenticated setup 401s.
-const server = spawn('node', [SERVER, boards], { env: { ...process.env, PORT: String(PORT), TILEMON_TOKEN: '', TILEMON_URL: '', TILEMON_NO_COLLECT: '1' }, stdio: 'ignore' });
+const server = spawn('node', [SERVER, boards], { env: { ...process.env, PORT: String(PORT), TILEMON_TOKEN: '', TILEMON_URL: '' }, stdio: 'ignore' });
 
 try {
   for (let i = 0; i < 50; i++) { try { await fetch(BASE + '/api/boards'); break; } catch { await new Promise(r => setTimeout(r, 100)); } }

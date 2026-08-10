@@ -13,8 +13,10 @@
 //   • Ownership. Every tile the collector writes is stamped origin:'session'. It reconciles ONLY
 //     those (engine.syncManaged) — human-PINNED tiles (any node without that origin) are never
 //     touched, so "important, don't-forget" tiles persist until the human marks them done.
-//   • home = includes of the boards that currently have session tiles. Nothing lands on home
-//     root; the unroutable go to an `inbox` board, not the overview.
+//   • Structure is the human's. `home` and the buckets are seeded once and persistent — the
+//     collector NEVER rebuilds them. It only maintains session tiles on project boards; a session
+//     whose project matches no board goes to an `inbox` board (never `home` root). Heat rolls up
+//     through the human's includes automatically.
 //
 // Storage-agnostic: reads the local fleet, writes through an injected engine — so the same run
 // targets the file daemon or (with an HTTP-backed engine) hosted tilemon.com.
@@ -51,9 +53,11 @@ export function loadConfig(ccDir) {
 // Apply the pattern: matched named groups win; if the name doesn't match at all, the whole name is
 // the description (→ project empty → inbox), so a badly-named session is visible, not dropped.
 function parseName(name, nameRe) {
-  const s = String(name || '');
+  // Cap the matched input: a user-supplied namePattern could backtrack catastrophically on a long
+  // string, and a hang wouldn't throw (it freezes the poll). Session names are short; 200 is ample.
+  const s = String(name || '').slice(0, 200);
   const g = s.match(nameRe)?.groups;
-  if (!g) return { project: '', description: s.trim() };
+  if (!g) return { project: '', description: String(name || '').trim() };
   return { project: (g.project || '').trim(), description: (g.description || '').trim() };
 }
 

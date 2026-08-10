@@ -61,6 +61,8 @@ your own pattern in **`~/.tilemon/config.json`**:
 
 (That example parses `project: description`.) A malformed pattern safely falls back to the default,
 and a name that doesn't match at all keeps the whole name as its description and routes to `inbox`.
+Keep patterns simple — avoid nested quantifiers like `(a+)+` (catastrophic backtracking); the
+matched name is length-capped as a backstop, but a pathological pattern is still your own footgun.
 
 **Matching the project to a board is strict** (this part isn't configurable): the extracted project
 and the board slugs are both normalised (lowercase, drop dashes) and must match exactly — no alias
