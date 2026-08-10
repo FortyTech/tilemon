@@ -41,6 +41,7 @@
 
 import http from 'node:http';
 import { createEngine, slugOk } from './engine.js';
+import { runCollector, projectTiles, readFleet, engineSink, remoteSink, compileNamePattern, loadConfig } from './collector.mjs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
@@ -70,7 +71,8 @@ const hasFlag = f => argv.includes(f);
   } catch { /* no credentials file → nothing to load */ }
 })();
 
-const SUBCMD = ['flag', 'attention', 'resolve', 'reconcile', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
+const SUBCMD = ['flag', 'attention', 'resolve', 'reconcile', 'collect', 'boards', 'state', 'add-board', 'add-item', 'include'].includes(argv[0]) ? argv[0] : null;   // client subcommands (talk to a board), not "serve this dir"
+const CC_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');   // where Claude Code writes jobs/ + sessions/ (the passive source)
 // boards dir: an explicit path wins; else --project => ./.tilemon (board scoped to this one repo);
 // else the default ~/.tilemon. In subcommand mode the positionals belong to the command, not the dir.
 const BOARDS = (!SUBCMD && argv.find(a => !a.startsWith('-'))) || (hasFlag('--project') ? './.tilemon' : join(homedir(), '.tilemon'));
@@ -321,7 +323,50 @@ const engine = createEngine({
     catch { return []; }
   },
 });
+// Serialize every board MUTATION (routes + the collector poll) so read-modify-write is atomic.
+// writeBoard alone only serialises the write step; without this a poll that reads before a human's
+// pin write lands, then writes after, would drop the pin. Reads (resolveBoard/listSlugs) stay free.
+let writeChain = Promise.resolve();
+const locked = fn => { const p = writeChain.then(fn, fn); writeChain = p.catch(() => {}); return p; };
+for (const m of ['status', 'weight', 'addNode', 'patchNode', 'removeNode', 'createBoard', 'moveNode', 'updateBoard', 'syncManaged']) {
+  const orig = engine[m].bind(engine);
+  engine[m] = (...a) => locked(() => orig(...a));
+}
 const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-side entry point
+
+// `tilemon collect [--dry-run] [--loop] [--interval <s>]` — the passive collector: read
+// ~/.claude/jobs and project the live sessions onto boards. The standalone file→board bridge.
+//   • target = TILEMON_URL if set (POST /api/collect on the hosted app) else the local file board.
+//   • --dry-run  prints the board it WOULD build, writes nothing.
+//   • --loop     stay running and re-collect every --interval seconds (default 60); this is the
+//                always-on bridge you run next to Claude Code — no local board server required.
+if (SUBCMD === 'collect') {
+  const remote = !!process.env.TILEMON_URL;
+  const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
+  if (hasFlag('--dry-run')) {
+    const knownSlugs = await sink.listSlugs().catch(() => []);   // route against the real boards, so the preview is accurate
+    const nameRe = compileNamePattern(loadConfig(CC_DIR).namePattern);
+    const { byBoard, dropped } = projectTiles(readFleet(CC_DIR), Date.now(), { knownSlugs, nameRe });
+    const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
+    console.log(`${tiles} live tiles across ${Object.keys(byBoard).length} board(s); would drop ${dropped.length} (done/dead)\n`);
+    for (const [b, ts] of Object.entries(byBoard).sort((a, z) => z[1].length - a[1].length)) {
+      console.log(`  ${b} (${ts.length})`);
+      for (const t of ts) console.log(`      [${t.status}] ${t.name.slice(0, 56)}\n          ${(t.note || '').slice(0, 90)}`);
+    }
+    process.exit(0);
+  }
+  const once = () => runCollector({ sink, ccDir: CC_DIR, log: s => console.log(s) })
+    .catch(e => { console.error('collect: ' + (e?.message || e)); return null; });   // fail soft — a stale board beats a crash
+  if (hasFlag('--loop')) {
+    const secs = Number(parseOpts(cmdArgs).opts.interval) || 60;
+    console.log(`tilemon collect --loop → ${remote ? CLIENT_BASE : BOARDS}  (every ${secs}s)`);
+    await once();
+    setInterval(once, secs * 1000);
+    await new Promise(() => {});   // standalone daemon: stay alive on the interval, never fall through to the server
+  }
+  const r = await once();
+  process.exit(r ? 0 : 1);
+}
 
 // Walk a resolved tree collecting the glowing (waiting/blocked) tiles, each stamped with `area` (its
 // share of the board = product of normalised sibling weights). Dedupes by owning board+path. Shared by

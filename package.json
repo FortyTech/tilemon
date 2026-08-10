@@ -1,7 +1,7 @@
 {
   "name": "tilemon",
-  "version": "0.18.0",
-  "description": "A priority board where importance is space. Zero-sum treemap over JSON boards; agents flag status, you own the weights.",
+  "version": "0.19.0",
+  "description": "A priority board where importance is space. Zero-sum treemap over JSON boards; a passive collector reflects your Claude Code sessions, you own the weights.",
   "type": "module",
   "bin": {
     "tilemon": "server.mjs"
@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.mjs",
     "demo": "node server.mjs ./examples/boards",
-    "test": "node test/board.test.mjs && node test/engine.test.mjs && node test/server.test.mjs && node test/reconcile.test.mjs"
+    "test": "node test/board.test.mjs && node test/engine.test.mjs && node test/collector.test.mjs && node test/server.test.mjs && node test/reconcile.test.mjs"
   },
   "engines": {
     "node": ">=18"
@@ -17,6 +17,7 @@
   "files": [
     "server.mjs",
     "engine.js",
+    "collector.mjs",
     "reconcile.mjs",
     "dashboard.html",
     "board.js",

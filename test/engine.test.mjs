@@ -13,12 +13,13 @@ const eq = (got, want, label) => {
 
 const memStore = () => {
   const boards = new Map();
-  return {
-    boards,
+  const store = {
+    boards, writes: 0,
     readBoard: async slug => structuredClone(boards.get(slug)) ?? null,
-    writeBoard: async (slug, board) => { boards.set(slug, structuredClone(board)); },
+    writeBoard: async (slug, board) => { store.writes++; boards.set(slug, structuredClone(board)); },
     listSlugs: async () => [...boards.keys()],
   };
+  return store;
 };
 
 // ---- pure helpers ----
@@ -149,6 +150,52 @@ eq(collectIncludes({ children: [{ id: 'x', include: 'p' }, { id: 'y', children: 
   eq((await e.moveNode('beta', 'x', null, '')).error, 'bad toBoard slug', 'moveNode rejects null toBoard');
   // weight with a missing path is a clean 400, not a throw
   eq((await createEngine(s).weight('precious', undefined, 1)).error, 'missing path', 'weight validates path');
+}
+
+// ---- syncManaged: the collector's ownership-scoped reconcile ----
+{
+  const s = memStore();
+  const e = createEngine(s);
+  // board with a human PIN (no origin) — must never be touched by syncManaged
+  s.boards.set('proj', { name: 'Proj', children: [{ id: 'pin', name: 'PIN', weight: 2, status: 'waiting' }] });
+
+  let r = await e.syncManaged('proj', 'session', [{ id: 's-1', name: 'A', weight: 1, status: 'in_progress' }]);
+  eq([r.added, r.updated, r.removed], [1, 0, 0], 'syncManaged: first add');
+  eq(s.boards.get('proj').children.map(c => c.id), ['pin', 's-1'], 'pin kept, managed appended');
+  eq(s.boards.get('proj').children[1].origin, 'session', 'managed node stamped with origin');
+
+  r = await e.syncManaged('proj', 'session', [{ id: 's-1', name: 'A2', weight: 1, status: 'waiting' }, { id: 's-2', name: 'B', weight: 1 }]);
+  eq([r.added, r.updated, r.removed], [1, 1, 0], 'syncManaged: add one, update one');
+  eq(s.boards.get('proj').children.find(c => c.id === 's-1').name, 'A2', 'managed node updated in place');
+
+  r = await e.syncManaged('proj', 'session', []);   // all sessions gone
+  eq([r.added, r.updated, r.removed], [0, 0, 2], 'syncManaged: clears all managed');
+  eq(s.boards.get('proj').children.map(c => c.id), ['pin'], 'pin survives an empty sync');
+
+  r = await e.syncManaged('fresh-board', 'session', [{ id: 's-9', name: 'X', weight: 1 }]);
+  eq(r.ok && s.boards.has('fresh-board'), true, 'syncManaged creates a missing board');
+  // a different origin is left alone by a session sync
+  s.boards.set('multi', { name: 'M', children: [{ id: 'a', origin: 'other', name: 'other' }] });
+  await e.syncManaged('multi', 'session', [{ id: 's-x', name: 'x', weight: 1 }]);
+  eq(s.boards.get('multi').children.some(c => c.id === 'a' && c.origin === 'other'), true, 'other origin untouched');
+
+  // no-op sync does NOT write (kills the per-poll churn)
+  const s2 = memStore(); const e2 = createEngine(s2);
+  const nodes = [{ id: 's-a', name: 'A', weight: 1, status: 'waiting', seen: 5 }];
+  await e2.syncManaged('b', 'session', nodes);
+  const after1 = s2.writes;
+  const r2 = await e2.syncManaged('b', 'session', nodes);   // identical → skip
+  eq([r2.added, r2.updated, r2.removed], [0, 0, 0], 'no-op sync reports no change');
+  eq(s2.writes, after1, 'no-op sync does not write (no churn)');
+  const r3 = await e2.syncManaged('b', 'session', [{ id: 's-a', name: 'A', weight: 1, status: 'in_progress', seen: 9 }]);
+  eq([r3.updated, s2.writes > after1], [1, true], 'a real change DOES write');
+
+  // a managed id that collides with a PIN is suffixed, never shadows the pin
+  s2.boards.set('c', { name: 'C', children: [{ id: 's-a', name: 'PIN', weight: 3 }] });   // pin id 's-a', no origin
+  await e2.syncManaged('c', 'session', [{ id: 's-a', name: 'session-a', weight: 1 }]);
+  const cc = s2.boards.get('c').children;
+  eq(cc.find(x => x.id === 's-a' && !x.origin)?.name, 'PIN', 'pin with clashing id kept intact');
+  eq(cc.some(x => x.origin === 'session' && x.id !== 's-a'), true, 'colliding managed id suffixed');
 }
 
 console.log(`engine: ${passed} passed, ${failed} failed`);
