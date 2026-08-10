@@ -41,7 +41,7 @@
 
 import http from 'node:http';
 import { createEngine, slugOk } from './engine.js';
-import { runCollector, projectTiles, readFleet, engineSink, remoteSink } from './collector.mjs';
+import { runCollector, projectTiles, readFleet, engineSink, remoteSink, compileNamePattern, loadConfig } from './collector.mjs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
@@ -345,7 +345,8 @@ if (SUBCMD === 'collect') {
   const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
   if (hasFlag('--dry-run')) {
     const knownSlugs = await sink.listSlugs().catch(() => []);   // route against the real boards, so the preview is accurate
-    const { byBoard, dropped } = projectTiles(readFleet(CC_DIR), Date.now(), { knownSlugs });
+    const nameRe = compileNamePattern(loadConfig(CC_DIR).namePattern);
+    const { byBoard, dropped } = projectTiles(readFleet(CC_DIR), Date.now(), { knownSlugs, nameRe });
     const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
     console.log(`${tiles} live tiles across ${Object.keys(byBoard).length} board(s); would drop ${dropped.length} (done/dead)\n`);
     for (const [b, ts] of Object.entries(byBoard).sort((a, z) => z[1].length - a[1].length)) {

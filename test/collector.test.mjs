@@ -2,7 +2,7 @@
 // the ownership invariant (session tiles reconcile on project boards; human pins and `home` are
 // never touched). `home` and the buckets are the human's seeded structure — the collector leaves
 // them alone and only maintains session tiles on project boards (+ inbox).
-import { projectTiles, runCollector, remoteSink } from '../collector.mjs';
+import { projectTiles, runCollector, remoteSink, compileNamePattern } from '../collector.mjs';
 import { createEngine } from '../engine.js';
 
 let passed = 0, failed = 0;
@@ -60,6 +60,24 @@ const known = ['doefin', 'forty-tech', 'free-merch-maker', 'twigface', 'tilemon-
   const t = byBoard.doefin[0];
   eq(t.name, 'check e2e - retry', 'label = description (priority + project stripped; inner " - " kept)');
   eq(t.note, 'install xvfb (2 PRs)', 'note = harness needs + PR count');
+}
+
+// ---- configurable name pattern: a custom regex extracts project + description ----
+{
+  const custom = compileNamePattern(String.raw`^(?<project>[^:]+):\s*(?<description>.+)$`);   // "project: description"
+  const { byBoard } = projectTiles(fleet(
+    job({ daemonShort: 'c', name: 'doefin: fix the thing', state: 'blocked' }),
+  ), NOW, { knownSlugs: known, nameRe: custom });
+  eq(byBoard.doefin?.[0]?.name, 'fix the thing', 'custom regex extracts description');
+  eq(byBoard.doefin?.[0] != null, true, 'custom regex routes via its own project group');
+}
+// invalid override never throws — falls back to the default pattern
+{
+  const re = compileNamePattern('(((');   // malformed
+  const { byBoard } = projectTiles(fleet(
+    job({ daemonShort: 'd', name: 'MED - DOEFIN - x', state: 'blocked' }),
+  ), NOW, { knownSlugs: known, nameRe: re });
+  eq(byBoard.doefin?.[0]?.name, 'x', 'malformed pattern fell back to default (parsed correctly)');
 }
 
 async function memEngine(seed = {}) {

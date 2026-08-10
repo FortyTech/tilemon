@@ -41,23 +41,33 @@ the one command. `--interval <seconds>` changes the cadence (default 60).
 
 ## Routing — how a session lands on the right board
 
-Routing is off the **session name**, which you control. Name every session:
+Routing is off the **session name**, which you control (the working directory is deliberately *not*
+used — sessions launched from a shared root would all misroute). How the name is split into parts is
+**configurable via a regex**, so you can use whatever naming convention you like.
+
+**The default** handles `[<importance> - ]<PROJECT> - <description>`:
 
 ```
-[<importance> - ]<PROJECT> - <description>       e.g.  MED - FORTYTECH - adfin outreach
+MED - FORTYTECH - adfin outreach   →   importance MED (dropped) · project FORTYTECH · description "adfin outreach"
 ```
 
-The collector splits on ` - `, drops a leading importance token (`LOW`/`MED`/`HIGH`), takes the next
-token as the **project**, and uses the rest as the tile's **description** (its label). Working
-directory is **not** used — sessions launched from a shared root would misroute, so the name is the
-only signal.
+It reads three named groups — **`project`** (routes to a board), **`description`** (the tile's
+label), and optional **`importance`** (extracted and dropped). To use a different convention, set
+your own pattern in **`~/.tilemon/config.json`**:
 
-Matching is **strict**: the project token and the board slugs are both normalised (lowercase, drop
-dashes) and must match exactly — no alias table. The dash-strip is the only fuzz, so `FORTYTECH` →
-`forty-tech` and `FREEMERCHMAKER` → `free-merch-maker` match automatically. A token that matches no
-board goes to **`inbox`** — your cue to rename the session (or add the board). True abbreviations
-(`FFF`, `META`) won't match `freeing-female-founders` / `forty-workspace`; spell them out, or name
-the board to match your habit.
+```json
+{ "namePattern": "^(?<project>[^:]+):\\s*(?<description>.+)$" }
+```
+
+(That example parses `project: description`.) A malformed pattern safely falls back to the default,
+and a name that doesn't match at all keeps the whole name as its description and routes to `inbox`.
+
+**Matching the project to a board is strict** (this part isn't configurable): the extracted project
+and the board slugs are both normalised (lowercase, drop dashes) and must match exactly — no alias
+table. The dash-strip is the only fuzz, so `FORTYTECH` → `forty-tech` and `FREEMERCHMAKER` →
+`free-merch-maker` match automatically. No match → **`inbox`**, your cue to rename the session (or
+add the board). True abbreviations (`FFF`, `META`) won't match `freeing-female-founders` /
+`forty-workspace`; spell them out, or name the board to match your habit.
 
 ## Buckets & the overview (`home`) — your persistent structure
 

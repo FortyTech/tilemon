@@ -26,19 +26,35 @@ import { slugify } from './engine.js';
 const ORIGIN = 'session';
 const LIVE_MS = 20 * 60 * 1000;         // live if the session heartbeat within 20 min
 const INBOX = 'inbox';                                 // sessions whose project token matches no board
-const PRIORITY_TOKEN = /^(low|med|medium|high|z)$/i;   // dropped leading importance labels
 
-// The human names every session `[<importance> - ]<PROJECT> - <description>`. We split on " - ":
-// drop a leading importance token, the next token is the PROJECT (routes to a board), and the rest
-// is the DESCRIPTION (the tile's label). Only the first two tokens are structural, so a description
-// containing " - " stays intact. See references/setup.md.
-function parseName(name) {
-  const parts = String(name || '').split(/\s+-\s+/).map(s => s.trim()).filter(Boolean);
-  let i = 0;
-  if (parts[i] && PRIORITY_TOKEN.test(parts[i])) i++;   // drop importance if present
-  const project = parts[i] || '';
-  const description = parts.slice(i + 1).join(' - ');
-  return { project, description };
+// How a session NAME is split into its parts is CONFIGURABLE — a named-capture regex, so anyone can
+// use their own naming convention (not just this repo's). The collector reads `project` (routes to a
+// board), `description` (the tile's label), and optionally `importance` (extracted and dropped).
+// Override in ~/.tilemon/config.json → { "namePattern": "<regex with named groups>" }.
+//
+// The DEFAULT handles `[IMPORTANCE - ]PROJECT - description` (case-insensitive importance; the
+// project has no dashes so `forty-tech` is written `FORTYTECH`; the description keeps any dashes).
+export const DEFAULT_NAME_PATTERN =
+  String.raw`^\s*(?:(?<importance>LOW|MED|MEDIUM|HIGH|Z)\s*-\s*)?(?<project>[^-]+?)\s*-\s*(?<description>.+?)\s*$`;
+
+/** Compile a name pattern; an invalid override falls back to the built-in default (never throws). */
+export function compileNamePattern(src) {
+  try { return new RegExp(src || DEFAULT_NAME_PATTERN, 'i'); }
+  catch { return new RegExp(DEFAULT_NAME_PATTERN, 'i'); }
+}
+
+/** Read ~/.tilemon/config.json (collector settings: namePattern, …). Absent/broken → {}. */
+export function loadConfig(ccDir) {
+  return (ccDir && readJSON(join(ccDir, 'config.json'))) || {};
+}
+
+// Apply the pattern: matched named groups win; if the name doesn't match at all, the whole name is
+// the description (→ project empty → inbox), so a badly-named session is visible, not dropped.
+function parseName(name, nameRe) {
+  const s = String(name || '');
+  const g = s.match(nameRe)?.groups;
+  if (!g) return { project: '', description: s.trim() };
+  return { project: (g.project || '').trim(), description: (g.description || '').trim() };
 }
 
 // Routing is STRICT: normalize the project token and every real board slug the same way
@@ -83,7 +99,7 @@ const shortId = job =>
  * project token that matches none → `inbox`). Each tile's LABEL is the description parsed from the
  * session name; its NOTE is the harness's live status (`needs`/`detail`).
  */
-export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LIVE_MS, knownSlugs = [] } = {}) {
+export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LIVE_MS, knownSlugs = [], nameRe = compileNamePattern() } = {}) {
   const slugByNorm = new Map(knownSlugs.map(s => [norm(s), s]));   // normalized slug → real slug
   const byBoard = {};
   const dropped = [];
@@ -94,7 +110,7 @@ export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LI
       const live = (now - beat) < liveMs;
       if (job.state === 'done' || !live) { dropped.push(job); continue; }   // decay: dead or settled
       const status = job.state === 'blocked' ? 'waiting' : 'in_progress';   // working → in_progress
-      const { project, description } = parseName(job.name);
+      const { project, description } = parseName(job.name, nameRe);
       const prs = (job.children || []).filter(c => c.kind === 'pr').length;
       let note = (job.needs || job.detail || '').toString().replace(/\s+/g, ' ').trim();
       if (prs) note = (note ? note + ' ' : '') + `(${prs} PR${prs === 1 ? '' : 's'})`;
@@ -162,7 +178,8 @@ export function remoteSink({ url, token, fetchImpl = fetch }) {
 export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(), log = () => {} }) {
   sink = sink || engineSink(engine);
   const existing = await sink.listSlugs();                              // the real boards to route against
-  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now, { knownSlugs: existing });
+  const nameRe = compileNamePattern(loadConfig(ccDir).namePattern);    // ~/.tilemon/config.json override, else default
+  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now, { knownSlugs: existing, nameRe });
   const plan = planBoards(byBoard, existing);
 
   let changed = 0;

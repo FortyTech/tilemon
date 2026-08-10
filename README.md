@@ -78,8 +78,10 @@ tilemon collect --dry-run     # print the board it WOULD build from your session
 tilemon collect --loop &      # run it: reconcile every 60s (--interval to change)
 ```
 
-- **A tile is a live session** — routed to its project board by the session's name, gone the moment
-  the session ends. The board can't accrete; it only ever shows what's live.
+- **A tile is a live session** — routed to its project board by the session's name (via a
+  **configurable regex** — default `[IMPORTANCE -] PROJECT - description`; override in
+  `~/.tilemon/config.json`), gone the moment the session ends. The board can't accrete; it only
+  ever shows what's live.
 - **Target is the sink.** With `TILEMON_URL` set it POSTs to the hosted app (`/api/collect`); unset,
   it writes a local board directly. Same collector either way — run it next to Claude Code and point
   it at tilemon.com, or at your own `npx tilemon` server.
