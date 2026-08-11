@@ -90,6 +90,13 @@ const STYLE = `
 /* inline note under a leaf's name — the "why", always visible (truncated to 2 lines); full text in the title tooltip */
 .tlm-board .nt{font-size:10px;line-height:1.25;opacity:.72;max-width:100%;overflow:hidden;text-overflow:ellipsis;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal}
+/* outstanding-PR chips on a leaf — link straight to GitHub; a dark pill so they read on any signal colour */
+.tlm-board .prs{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
+.tlm-board .pr{font-family:"Space Mono",monospace;font-size:9.5px;line-height:1.5;text-decoration:none;cursor:pointer;
+  padding:0 5px;border-radius:8px;background:rgba(0,0,0,.36);color:#EAF0FF;border:1px solid rgba(255,255,255,.3);white-space:nowrap}
+.tlm-board .pr:hover{background:rgba(0,0,0,.52);border-color:#fff;color:#fff}
+.tlm-board .pr.bad{background:rgba(122,20,12,.68);color:#FFE3DD;border-color:rgba(255,122,98,.72)}
+.tlm-board .pr.bad:hover{background:rgba(150,26,16,.84);border-color:#ff8f78}
 .tlm-board .tlm-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-family:"Space Mono",monospace;font-size:12.5px;color:var(--tlm-dim,#9A9182);text-align:center;padding:24px;pointer-events:none}
 .tlm-board .tlm-toolbar{position:absolute;top:0;left:0;right:0;height:36px;z-index:820;display:flex;align-items:center;gap:8px;padding:0 10px;
@@ -149,7 +156,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     const isDone = n.status === 'done';
     if (isDone && !doneVisible(n)) return null;
     const out = { id: n.id, name: n.name, weight: num(n.weight, 1), status: n.status, note: n.note, seen: n.seen, toolbar: n.toolbar,
-      signals: n.signals, _board: n._board, _path: n._path, _boardLink: n._boardLink, _ro: n._ro, _missing: n._missing, _cycle: n._cycle,
+      signals: n.signals, prs: n.prs, _board: n._board, _path: n._path, _boardLink: n._boardLink, _ro: n._ro, _missing: n._missing, _cycle: n._cycle,
       heat: STATUS_HEAT[n.status] ?? 0, _done: isDone || undefined };
     const kids = n.children;
     if (kids && kids.length) {
@@ -245,6 +252,23 @@ export function mount(boardEl, controlsEl, opts = {}) {
     return 'rgb(216,67,46)'; }
   const textColor = h => h > 0.6 ? '#2A1206' : 'var(--tlm-ink,#ECE7DA)';
   const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  // Outstanding-PR chips: one clickable "PR #n ↗" per open PR (red when CI is failing). Opens GitHub in
+  // a new tab; `.pr` is guarded in onDown/dblclick so a chip click navigates rather than drags/drills.
+  const attr = s => esc(s).replace(/"/g, '&quot;');   // attribute-safe: esc handles &<>, plus quotes
+  const prChips = node => {
+    const prs = node.prs;
+    if (!prs || !prs.length) return '';
+    return '<span class="prs">' + prs.map(p => {
+      const cls = `pr${p.ciFailed ? ' bad' : ''}`;
+      const label = p.number ? `PR #${esc(p.number)}` : 'PR';
+      const title = attr((p.number ? `PR #${p.number}` : 'PR') + (p.ciFailed ? ' — CI failing' : ''));
+      // only http(s) hrefs become links — a public renderer must never emit a clickable javascript: URL
+      const href = /^https?:\/\//i.test(p.href || '') ? attr(p.href) : null;
+      return href
+        ? `<a class="${cls}" href="${href}" target="_blank" rel="noopener noreferrer" title="${title}">${label} ↗</a>`
+        : `<span class="${cls}" title="${title}">${label}</span>`;
+    }).join('') + '</span>';
+  };
   function findByKey(n, k) { if (nkey(n) === k) return n; for (const c of (n.children || [])) { const f = findByKey(c, k); if (f) return f; } return null; }
   function pathNodes(n) { const p = []; let c = n; while (c) { p.unshift(c); c = c._parent; } return p; }
   // the outermost ancestor of `node` that sits directly inside the current view (the "big" thing)
@@ -269,6 +293,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
       if (!el) { el = doc.createElement('div'); el.className = 'tile'; el.style.opacity = '0'; el.dataset.id = node.id; el.dataset.key = k;
         el.addEventListener('pointerdown', onDown);
         el.addEventListener('dblclick', e => {   // drill the OUTERMOST container under the view, wherever you clicked
+          if (e.target && e.target.closest && e.target.closest('.pr')) return;   // a PR chip is a link, not a drill target
           e.stopPropagation();
           const n = findByKey(root, el.dataset.key); if (!n) return;
           const t = outermostUnderView(n);
@@ -297,7 +322,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
       let html = '';
       if (isParent) { if (r.w > 44 && r.h > 24) html = `<div class="hd"><span class="nm">${esc(node.name)}${isBoard ? ' <span class="bl" title="board">↗</span>' : ''}</span>${wt}</div>`; }
       else if (isBoard) { if (r.w > 34 && r.h > 20) { const b = node._missing ? 'missing ⚠' : node._cycle ? 'cycle ⟳' : 'empty board'; html = `<div class="leaf"><span class="nm">${esc(node.name)}</span><span class="badge">${b}</span></div>`; } }
-      else { if (r.w > 34 && r.h > 20) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${node.note ? `<span class="nt">${esc(node.note)}</span>` : ''}${wt}</div>`; }
+      else { if (r.w > 34 && r.h > 20) html = `<div class="leaf"><span class="nm">${esc(node.name)}</span>${node.note ? `<span class="nt">${esc(node.note)}</span>` : ''}${prChips(node)}${wt}</div>`; }
       if (el._html !== html) { el.innerHTML = html; el._html = html; el._bar = null; }   // wipes any bar; hover re-adds
     }
     for (const id in tileEls) { if (!seen.has(id)) { tileEls[id].remove(); delete tileEls[id]; } }
@@ -379,6 +404,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
 
   // ---- corner-drag resize: grab a tile, the quadrant picks the moving corner (relative) ----
   function onDown(e) {
+    if (e.target && e.target.closest && e.target.closest('.pr')) return;   // let a PR chip navigate (don't drag/select) — must run BEFORE stopPropagation
     e.stopPropagation();
     if (e.target && e.target.closest && e.target.closest('.tlm-bar')) return;   // clicks on the action bar aren't drags
     const tapped = findByKey(root, e.currentTarget.dataset.key); if (!tapped) return;

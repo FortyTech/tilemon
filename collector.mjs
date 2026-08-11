@@ -112,7 +112,23 @@ export function countSignals(job, prStatus = {}) {
   const openPRs = (job.children || []).filter(c => c && c.kind === 'pr' && prStatus[c.href]?.state === 'OPEN');
   if (openPRs.length) { n++; reasons.push(`${openPRs.length} open PR${openPRs.length === 1 ? '' : 's'}`); }
   if (openPRs.some(c => (prStatus[c.href]?.checks?.failed || 0) > 0)) { n++; reasons.push('CI failing'); }
-  return { signals: n, reasons };
+  return { signals: n, reasons, openPRs };
+}
+
+/**
+ * The outstanding-PR links for a tile — one entry per OPEN PR the session carries, so board.js can
+ * render a clickable "PR #n ↗" chip (red when CI is failing). Derived from the same `openPRs` the
+ * signal count is built on, so a link and its signal never disagree. `number` is parsed from the
+ * GitHub URL (…/pull/50); it falls back to null (the chip then reads just "PR ↗") for odd hrefs.
+ */
+export function prLinks(openPRs = [], prStatus = {}) {
+  return openPRs
+    .filter(c => c && c.href)
+    .map(c => ({
+      href: c.href,
+      number: (String(c.href).match(/\/pulls?\/(\d+)/) || [])[1] || null,
+      ciFailed: (prStatus[c.href]?.checks?.failed || 0) > 0,
+    }));
 }
 // interim compat: map the count onto an existing status so board.js renders sanely until it learns
 // to colour by `signals` directly (green shows as neutral `todo` for now; amber/red already match).
@@ -134,16 +150,18 @@ export function projectTiles({ jobs, sessions, prStatus = {} }, now = Date.now()
       const s = sessions[job.sessionId] || {};
       const beat = s.statusUpdatedAt || Date.parse(job.updatedAt || '') || 0;   // heartbeat → live dot
       const { project, description } = parseName(job.name, nameRe);
-      const { signals, reasons } = countSignals(job, prStatus);
+      const { signals, reasons, openPRs } = countSignals(job, prStatus);
       let note = (job.needs || job.detail || '').toString().replace(/\s+/g, ' ').trim();
       const extra = reasons.filter(r => r !== 'needs you');   // 'needs you' is already said by the amber colour
       if (extra.length) note = (note ? note + ' · ' : '') + extra.join(' · ');
+      const prs = prLinks(openPRs, prStatus);   // outstanding-PR chips → link straight to GitHub
       const node = {
         id: 's-' + shortId(job),
         name: (description || project || job.intent || 'session').toString().slice(0, 120),  // the DESCRIPTION is the label
         weight: 1,
         status: statusForSignals(signals),   // interim; board.js will colour by `signals`
         signals,                              // the attention-signal count → colour (green/amber/red)
+        ...(prs.length ? { prs } : {}),       // omit entirely when there are none (keeps nodes lean + churn-free)
         note,
         // seen = the session's own heartbeat (NOT now) — stable across idle polls (no churn), and it
         // drives the live dot: a fresh session shows "active", a settled/old one just shows quietly.

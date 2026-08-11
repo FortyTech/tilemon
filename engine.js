@@ -101,7 +101,7 @@ export function createEngine({ readBoard, writeBoard, listSlugs }) {
                  _missing: !sub || undefined, _cycle: (sub && sub.__cycle) || undefined,
                  children: cyc ? [] : (sub.children || []) };              // children carry the sub-board's own stamps
       }
-      const out = { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, seen: node.seen, signals: node.signals, _board: slug, _path: path };
+      const out = { id: node.id, name: node.name, weight: node.weight, status: node.status, note: node.note, seen: node.seen, signals: node.signals, prs: node.prs, _board: slug, _path: path };
       if (ro) out._ro = true;
       if (node.children && node.children.length) {
         out.children = [];

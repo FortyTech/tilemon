@@ -1,6 +1,6 @@
 {
   "name": "tilemon",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "A priority board where importance is space. Zero-sum treemap over JSON boards; a passive collector reflects your Claude Code sessions, you own the weights.",
   "type": "module",
   "bin": {
