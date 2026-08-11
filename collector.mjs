@@ -26,7 +26,6 @@ import { join } from 'node:path';
 import { slugify } from './engine.js';
 
 const ORIGIN = 'session';
-const LIVE_MS = 20 * 60 * 1000;         // live if the session heartbeat within 20 min
 const INBOX = 'inbox';                                 // sessions whose project token matches no board
 
 // How a session NAME is split into its parts is CONFIGURABLE — a named-capture regex, so anyone can
@@ -91,39 +90,65 @@ export function readFleet(ccDir) {
       if (!prev || (s.statusUpdatedAt || 0) > (prev.statusUpdatedAt || 0)) sessions[s.sessionId] = s;
     }
   } catch { /* no sessions dir */ }
-  return { jobs, sessions };
+  // Claude Code's PR-status cache (open/merged + CI checks), keyed by PR URL — an attention signal.
+  const prStatus = readJSON(join(ccDir, 'gh-pr-status-cache.json')) || {};
+  return { jobs, sessions, prStatus };
 }
 
 const shortId = job =>
   job.daemonShort || (typeof job.sessionId === 'string' ? job.sessionId.slice(0, 8) : slugify(job.name || 'session'));
 
 /**
- * Pure projection: fleet → { boardSlug: [tileNode, …] }. Only LIVE, non-done sessions become
- * tiles (decay). `knownSlugs` is the set of real board slugs to route against (strict match; a
- * project token that matches none → `inbox`). Each tile's LABEL is the description parsed from the
- * session name; its NOTE is the harness's live status (`needs`/`detail`).
+ * Count a session's live ATTENTION SIGNALS — the colour is the count, not a fixed palette:
+ *   1 = it just exists (a finished outcome to glance at)     → green
+ *   2 = existence + one of {blocked, an open PR}             → amber
+ *   3+ = existence + blocked + open PR / failing CI          → red
+ * New signals slot in here later (uncommitted work, requested-changes, …) with no new colours.
  */
-export function projectTiles({ jobs, sessions }, now = Date.now(), { liveMs = LIVE_MS, knownSlugs = [], nameRe = compileNamePattern() } = {}) {
+export function countSignals(job, prStatus = {}) {
+  let n = 1;                                    // existence — the baseline signal
+  const reasons = [];
+  if (job.state === 'blocked') { n++; reasons.push('needs you'); }
+  const openPRs = (job.children || []).filter(c => c && c.kind === 'pr' && prStatus[c.href]?.state === 'OPEN');
+  if (openPRs.length) { n++; reasons.push(`${openPRs.length} open PR${openPRs.length === 1 ? '' : 's'}`); }
+  if (openPRs.some(c => (prStatus[c.href]?.checks?.failed || 0) > 0)) { n++; reasons.push('CI failing'); }
+  return { signals: n, reasons };
+}
+// interim compat: map the count onto an existing status so board.js renders sanely until it learns
+// to colour by `signals` directly (green shows as neutral `todo` for now; amber/red already match).
+const statusForSignals = n => (n >= 3 ? 'blocked' : n >= 2 ? 'waiting' : 'todo');
+
+/**
+ * Pure projection: fleet → { boardSlug: [tileNode, …] }. MIRRORS every session that exists — no
+ * decay; a tile lives while its job does and vanishes when the harness GCs the job. Each tile
+ * carries `signals` (the attention-signal count → colour) and `seen` (liveness → the live dot,
+ * a separate axis). `knownSlugs` routes the project token (strict match; no match → `inbox`).
+ * Label = the description parsed from the name; note = the harness status + signal reasons.
+ */
+export function projectTiles({ jobs, sessions, prStatus = {} }, now = Date.now(), { knownSlugs = [], nameRe = compileNamePattern() } = {}) {
   const slugByNorm = new Map(knownSlugs.map(s => [norm(s), s]));   // normalized slug → real slug
   const byBoard = {};
   const dropped = [];
   for (const job of jobs) {
     try {
       const s = sessions[job.sessionId] || {};
-      const beat = s.statusUpdatedAt || Date.parse(job.updatedAt || '') || 0;
-      const live = (now - beat) < liveMs;
-      if (job.state === 'done' || !live) { dropped.push(job); continue; }   // decay: dead or settled
-      const status = job.state === 'blocked' ? 'waiting' : 'in_progress';   // working → in_progress
+      const beat = s.statusUpdatedAt || Date.parse(job.updatedAt || '') || 0;   // heartbeat → live dot
       const { project, description } = parseName(job.name, nameRe);
-      const prs = (job.children || []).filter(c => c.kind === 'pr').length;
+      const { signals, reasons } = countSignals(job, prStatus);
       let note = (job.needs || job.detail || '').toString().replace(/\s+/g, ' ').trim();
-      if (prs) note = (note ? note + ' ' : '') + `(${prs} PR${prs === 1 ? '' : 's'})`;
+      const extra = reasons.filter(r => r !== 'needs you');   // 'needs you' is already said by the amber colour
+      if (extra.length) note = (note ? note + ' · ' : '') + extra.join(' · ');
       const node = {
         id: 's-' + shortId(job),
         name: (description || project || job.intent || 'session').toString().slice(0, 120),  // the DESCRIPTION is the label
-        // seen = the session's own heartbeat, NOT now — so an idle poll yields byte-identical
-        // tiles and syncManaged skips the write (no per-poll file churn / SSE spam).
-        weight: 1, status, note, seen: beat || now, origin: ORIGIN, sessionId: job.sessionId,
+        weight: 1,
+        status: statusForSignals(signals),   // interim; board.js will colour by `signals`
+        signals,                              // the attention-signal count → colour (green/amber/red)
+        note,
+        // seen = the session's own heartbeat (NOT now) — stable across idle polls (no churn), and it
+        // drives the live dot: a fresh session shows "active", a settled/old one just shows quietly.
+        seen: beat || now,
+        origin: ORIGIN, sessionId: job.sessionId,
       };
       (byBoard[routeBoard(project, slugByNorm)] ||= []).push(node);
     } catch { dropped.push(job); }   // one malformed job must never abort the whole poll
