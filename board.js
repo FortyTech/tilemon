@@ -149,7 +149,7 @@ export function mount(boardEl, controlsEl, opts = {}) {
     const isDone = n.status === 'done';
     if (isDone && !doneVisible(n)) return null;
     const out = { id: n.id, name: n.name, weight: num(n.weight, 1), status: n.status, note: n.note, seen: n.seen, toolbar: n.toolbar,
-      _board: n._board, _path: n._path, _boardLink: n._boardLink, _ro: n._ro, _missing: n._missing, _cycle: n._cycle,
+      signals: n.signals, _board: n._board, _path: n._path, _boardLink: n._boardLink, _ro: n._ro, _missing: n._missing, _cycle: n._cycle,
       heat: STATUS_HEAT[n.status] ?? 0, _done: isDone || undefined };
     const kids = n.children;
     if (kids && kids.length) {
@@ -233,6 +233,11 @@ export function mount(boardEl, controlsEl, opts = {}) {
   }
 
   const lerp = (a, b, t) => a + (b - a) * t;
+  // A session tile's colour is its ATTENTION-SIGNAL COUNT (not the heat gradient): 1 = green (a
+  // finished outcome), 2 = amber (blocked, or an open PR), 3+ = red (blocked + PR / failing CI).
+  // Leaves only — it does NOT roll up (buckets keep the area-weighted heat, same as always).
+  const SIGNAL_RGB = { 1: [96, 138, 74], 2: [176, 106, 31], 3: [216, 67, 46] };
+  const signalColor = n => { const c = SIGNAL_RGB[Math.min(3, Math.max(1, n))]; return `rgb(${c[0]},${c[1]},${c[2]})`; };
   function heatColor(h) { h = Math.max(0, Math.min(1, h));
     const st = [[0, [50, 48, 41]], [0.35, [92, 74, 46]], [0.7, [176, 106, 31]], [1, [216, 67, 46]]];
     for (let i = 0; i < st.length - 1; i++) { const [p0, c0] = st[i], [p1, c1] = st[i + 1];
@@ -276,9 +281,11 @@ export function mount(boardEl, controlsEl, opts = {}) {
       el.style.left = (r.x + INSET) + 'px'; el.style.top = (r.y + INSET) + 'px';
       el.style.width = Math.max(0, r.w - 2 * INSET) + 'px'; el.style.height = Math.max(0, r.h - 2 * INSET) + 'px';
       el.style.zIndex = r.depth;
-      el.style.background = node._done ? DONE_COLOR : heatColor(node._heat);
-      el.style.color = node._done ? 'var(--tlm-ink,#ECE7DA)' : textColor(node._heat);
-      el.classList.toggle('hot', node._heat > 0.66 && !node._done);
+      // a leaf session tile colours by its signal count; everything else (buckets/structure) keeps the roll-up heat
+      const sig = (!node.children || !node.children.length) && node.signals != null ? node.signals : null;
+      el.style.background = node._done ? DONE_COLOR : sig != null ? signalColor(sig) : heatColor(node._heat);
+      el.style.color = node._done ? 'var(--tlm-ink,#ECE7DA)' : (sig != null ? (sig >= 2 ? '#2A1206' : 'var(--tlm-ink,#ECE7DA)') : textColor(node._heat));
+      el.classList.toggle('hot', ((sig != null ? sig >= 3 : node._heat > 0.66)) && !node._done);
       el.classList.toggle('live', !!node._live);                            // agent attached & fresh → liveness dot (any status)
       el.classList.toggle('stalled', !!node._working && !node._live && !node._done);   // in_progress but gone quiet → abandoned
       el.classList.toggle('done', !!node._done);
