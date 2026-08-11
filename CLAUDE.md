@@ -75,10 +75,17 @@ busy|idle liveness). `collector.mjs` reads it (a standalone `collect --loop`, de
 **live** sessions onto their project boards. No Stop hook, no `claude -p` judge, no agent
 cooperation.
 
-- **A tile is a live session** — keyed by session short-id, routed to a project board by session
-  **name** (cwd is a fallback only; it's often the workspace root). It **decays** the moment the
-  session settles (`done`) or goes stale (no heartbeat) — so the board is bounded by live-session
-  count and cannot accrete (the failure mode that made the pushed board unusable: 223 flat tiles).
+- **A tile is a session that exists** — the collector MIRRORS every job in `~/.claude/jobs` (matching
+  Claude Code's own agents view); a tile lives while its session does and vanishes when the harness
+  GCs it. No decay, no manual clearing — clearing "falls out" of the mirror. Keyed by session
+  short-id, routed to a project board by session **name** (cwd is not used — it's often the shared
+  launch dir). The 223-flat-tile failure was junk accretion (duplicates, stale, on home root), which
+  the ownership model + one-tile-per-session prevent — not persistence itself.
+- **Colour = attention-signal count** (`countSignals`), an intensity, not a fixed palette: existence
+  (1, green) → +blocked → +open PR (from `gh-pr-status-cache.json`) → +failing CI ⇒ 1 green · 2 amber
+  · 3+ red. New signals just increment the count — never a new colour. `board.js` colours **leaves
+  only** (no roll-up; buckets keep their weight-based heat). `seen` (heartbeat) stays a separate
+  liveness axis (the live dot). `engine.resolveBoard` carries `signals` into the render tree.
 - **Two tile kinds, by ownership.** Collector tiles are stamped `origin:'session'` and reconciled
   via `engine.syncManaged(slug, origin, desired)` — which touches *only* nodes of that origin.
   Any node without it is a human **pin**: it persists until the human marks it done and the
