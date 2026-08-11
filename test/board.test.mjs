@@ -205,4 +205,23 @@ board.update(noteBoard); raf.forEach(fn => fn());
 assert.ok(tile('q').title === 'Q — which provider — Clerk or Auth0?', 'every tile carries a native title tooltip (name + note) — identifiable even when too small to label');
 assert.ok(tile('q').innerHTML.includes('class="nt"') && tile('q').innerHTML.includes('Clerk or Auth0'), 'the note renders inline under the name (always visible, no floating caption)');
 
-console.log(`PASS — data pipeline + inlined boards + hover bars + notes + cross-board writes + add + corner-drag + shell/toolbar + attention channels (todo/in_progress/waiting/blocked) verified`);
+// PR chips: an outstanding PR renders as a clickable "PR #n ↗" anchor on the leaf; failing CI → .bad
+const prBoard = { name: 'P', _board: 'p', _path: '', children: [
+  { id: 'withpr', name: 'ship it', weight: 1, status: 'waiting', signals: 2, _board: 'p', _path: 'withpr',
+    prs: [{ href: 'https://github.com/o/r/pull/50', number: '50', ciFailed: false }] },
+  { id: 'badci', name: 'ci broke', weight: 1, status: 'blocked', signals: 3, _board: 'p', _path: 'badci',
+    prs: [{ href: 'https://github.com/o/r/pull/51', number: '51', ciFailed: true }] },
+  { id: 'nopr', name: 'plain', weight: 1, status: 'todo', signals: 1, _board: 'p', _path: 'nopr' },
+  // hostile host-supplied prs (board.js is the public npm renderer): non-http scheme + a quote in the number
+  { id: 'evil', name: 'evil', weight: 1, status: 'todo', signals: 1, _board: 'p', _path: 'evil',
+    prs: [{ href: 'javascript:alert(1)', number: '9"><img>', ciFailed: false }] },
+] };
+board.update(prBoard); raf.forEach(fn => fn());
+const prHtml = id => tile(id)?.innerHTML || '';
+assert.ok(/<a class="pr" href="https:\/\/github\.com\/o\/r\/pull\/50"[^>]*>PR #50 ↗<\/a>/.test(prHtml('withpr')), 'open PR renders a chip linking to the PR with the number parsed from the URL');
+assert.ok(/class="pr bad"/.test(prHtml('badci')) && /PR #51 ↗/.test(prHtml('badci')), 'a PR with failing CI gets the red .bad chip');
+assert.ok(!/class="pr/.test(prHtml('nopr')), 'a leaf with no open PRs renders no chip');
+assert.ok(!/<a /.test(prHtml('evil')) && /<span class="pr"/.test(prHtml('evil')), 'a non-http href is NOT rendered as a link (no javascript: anchor)');
+assert.ok(!prHtml('evil').includes('"><img>') && prHtml('evil').includes('&quot;'), 'a quote in the PR number is attribute-escaped, not injected');
+
+console.log(`PASS — data pipeline + inlined boards + hover bars + notes + PR chips + cross-board writes + add + corner-drag + shell/toolbar + attention channels (todo/in_progress/waiting/blocked) verified`);

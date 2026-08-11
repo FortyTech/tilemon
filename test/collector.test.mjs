@@ -2,7 +2,7 @@
 // the ownership invariant (session tiles reconcile on project boards; human pins and `home` are
 // never touched). `home` and the buckets are the human's seeded structure — the collector leaves
 // them alone and only maintains session tiles on project boards (+ inbox).
-import { projectTiles, runCollector, remoteSink, compileNamePattern, countSignals } from '../collector.mjs';
+import { projectTiles, runCollector, remoteSink, compileNamePattern, countSignals, prLinks } from '../collector.mjs';
 import { createEngine } from '../engine.js';
 
 let passed = 0, failed = 0;
@@ -55,6 +55,35 @@ const known = ['doefin', 'forty-tech', 'free-merch-maker', 'twigface', 'tilemon-
   eq(sig({ state: 'blocked', children: [{ kind: 'pr', href: openClean }] }), 3, 'blocked + open PR → 3 (red)');
   eq(sig({ state: 'done', children: [{ kind: 'pr', href: openFail }] }), 3, 'done + open PR + failing CI → 3 (red)');
   eq(countSignals({ state: 'done', children: [{ kind: 'pr', href: openClean }] }, prStatus).reasons.includes('1 open PR'), true, 'reason lists the open PR');
+}
+
+// ---- outstanding-PR links → the "PR #n ↗" chips (only OPEN PRs; number parsed from the URL; CI flag) ----
+{
+  const openClean = 'https://github.com/o/r/pull/50', openFail = 'https://github.com/o/r/pull/51', merged = 'https://github.com/o/r/pull/9';
+  const prStatus = {
+    [openClean]: { state: 'OPEN', checks: { failed: 0 } },
+    [openFail]: { state: 'OPEN', checks: { failed: 2 } },
+    [merged]: { state: 'MERGED', checks: { failed: 0 } },
+  };
+  const links = (job) => prLinks(countSignals(job, prStatus).openPRs, prStatus);
+  eq(links({ state: 'done', children: [{ kind: 'pr', href: openClean }] }),
+     [{ href: openClean, number: '50', ciFailed: false }], 'open PR → one chip, number parsed from /pull/50');
+  eq(links({ state: 'done', children: [{ kind: 'pr', href: openFail }] }),
+     [{ href: openFail, number: '51', ciFailed: true }], 'failing CI → ciFailed:true');
+  eq(links({ state: 'done', children: [{ kind: 'pr', href: merged }] }), [], 'merged PR is not outstanding → no chip');
+  eq(prLinks([{ href: 'https://example.com/thing' }], {}), [{ href: 'https://example.com/thing', number: null, ciFailed: false }], 'non-PR-shaped href → number null (chip reads just "PR")');
+}
+
+// ---- projection attaches prs to the tile only when there's an open PR ----
+{
+  const openClean = 'https://github.com/o/r/pull/7';
+  const prStatus = { [openClean]: { state: 'OPEN', checks: { failed: 0 } } };
+  const { byBoard } = projectTiles({ ...fleet(
+    job({ daemonShort: 'a', name: 'MED - DOEFIN - ship it', state: 'done', children: [{ kind: 'pr', href: openClean }] }),
+    job({ daemonShort: 'b', name: 'MED - TWIGFACE - no pr', state: 'working' }),
+  ), prStatus }, NOW, { knownSlugs: known });
+  eq(byBoard.doefin[0].prs, [{ href: openClean, number: '7', ciFailed: false }], 'tile carries prs when a PR is open');
+  eq('prs' in byBoard.twigface[0], false, 'tile has NO prs key when there are none (lean nodes)');
 }
 
 // ---- projection: STRICT dash-stripped routing; unmatched → inbox ----
