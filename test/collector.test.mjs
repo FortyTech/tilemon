@@ -2,7 +2,7 @@
 // the ownership invariant (session tiles reconcile on project boards; human pins and `home` are
 // never touched). `home` and the buckets are the human's seeded structure — the collector leaves
 // them alone and only maintains session tiles on project boards (+ inbox).
-import { projectTiles, runCollector, remoteSink, compileNamePattern } from '../collector.mjs';
+import { projectTiles, runCollector, remoteSink, compileNamePattern, countSignals } from '../collector.mjs';
 import { createEngine } from '../engine.js';
 
 let passed = 0, failed = 0;
@@ -21,21 +21,40 @@ const fleet = (...jobs) => ({
 const job = (o) => ({ sessionId: o.sessionId || 'sid-' + (o.daemonShort || o.name), state: 'working', ...o });
 const known = ['doefin', 'forty-tech', 'free-merch-maker', 'twigface', 'tilemon-app'];
 
-// ---- projection: decay + label = description ----
+// ---- projection: MIRROR every session (no decay), label = description ----
 {
-  const { byBoard, dropped } = projectTiles(fleet(
+  const { byBoard } = projectTiles(fleet(
     job({ daemonShort: 'aaa', name: 'DOEFIN - live blocked', state: 'blocked' }),
     job({ daemonShort: 'bbb', name: 'DOEFIN - live working', state: 'working' }),
     job({ daemonShort: 'ccc', name: 'DOEFIN - done', state: 'done' }),
     job({ daemonShort: 'ddd', name: 'DOEFIN - dead', state: 'blocked', _beat: stale }),
   ), NOW, { knownSlugs: known });
-  eq(dropped.length, 2, 'decay: done + dead dropped');
-  eq((byBoard.doefin || []).length, 2, 'decay: only live kept');
+  eq((byBoard.doefin || []).length, 4, 'mirror ALL sessions — done and stale are NOT dropped');
   const byId = Object.fromEntries((byBoard.doefin || []).map(t => [t.id, t]));
-  eq(byId['s-aaa'].status, 'waiting', 'blocked → waiting');
-  eq(byId['s-bbb'].status, 'in_progress', 'working → in_progress');
+  eq(byId['s-aaa'].signals, 2, 'blocked → 2 signals (existence + needs-you) = amber');
+  eq(byId['s-bbb'].signals, 1, 'working → 1 signal (existence) = green');
+  eq(byId['s-ccc'].signals, 1, 'done → 1 signal (existence) = green');
   eq(byId['s-aaa'].name, 'live blocked', 'label = description (project token stripped)');
   eq(byId['s-aaa'].origin, 'session', 'tile stamped origin session');
+}
+
+// ---- signal counting → colour band (existence + blocked + open PR + failing CI) ----
+{
+  const openClean = 'https://gh/x/1', openFail = 'https://gh/x/2', merged = 'https://gh/x/3';
+  const prStatus = {
+    [openClean]: { state: 'OPEN', checks: { failed: 0 } },
+    [openFail]: { state: 'OPEN', checks: { failed: 1 } },
+    [merged]: { state: 'MERGED', checks: { failed: 0 } },
+  };
+  const sig = (o) => countSignals(o, prStatus).signals;
+  eq(sig({ state: 'done' }), 1, 'done, nothing → 1 (green)');
+  eq(sig({ state: 'working' }), 1, 'working → 1 (green)');
+  eq(sig({ state: 'blocked' }), 2, 'blocked → 2 (amber)');
+  eq(sig({ state: 'done', children: [{ kind: 'pr', href: merged }] }), 1, 'merged PR is NOT a signal → 1 (green)');
+  eq(sig({ state: 'done', children: [{ kind: 'pr', href: openClean }] }), 2, 'done + open PR → 2 (amber)');
+  eq(sig({ state: 'blocked', children: [{ kind: 'pr', href: openClean }] }), 3, 'blocked + open PR → 3 (red)');
+  eq(sig({ state: 'done', children: [{ kind: 'pr', href: openFail }] }), 3, 'done + open PR + failing CI → 3 (red)');
+  eq(countSignals({ state: 'done', children: [{ kind: 'pr', href: openClean }] }, prStatus).reasons.includes('1 open PR'), true, 'reason lists the open PR');
 }
 
 // ---- projection: STRICT dash-stripped routing; unmatched → inbox ----
@@ -59,7 +78,7 @@ const known = ['doefin', 'forty-tech', 'free-merch-maker', 'twigface', 'tilemon-
   ), NOW, { knownSlugs: known });
   const t = byBoard.doefin[0];
   eq(t.name, 'check e2e - retry', 'label = description (priority + project stripped; inner " - " kept)');
-  eq(t.note, 'install xvfb (2 PRs)', 'note = harness needs + PR count');
+  eq(t.note, 'install xvfb', 'note = harness needs (PRs only counted when OPEN in the cache, none here)');
 }
 
 // ---- configurable name pattern: a custom regex extracts project + description ----

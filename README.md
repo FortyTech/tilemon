@@ -78,10 +78,16 @@ tilemon collect --dry-run     # print the board it WOULD build from your session
 tilemon collect --loop &      # run it: reconcile every 60s (--interval to change)
 ```
 
-- **A tile is a live session** — routed to its project board by the session's name (via a
-  **configurable regex** — default `[IMPORTANCE -] PROJECT - description`; override in
-  `~/.tilemon/config.json`), gone the moment the session ends. The board can't accrete; it only
-  ever shows what's live.
+- **A tile is a session** — one per session that exists (mirroring Claude Code's own agents view),
+  routed to its project board by the session's name (via a **configurable regex** — default
+  `[IMPORTANCE -] PROJECT - description`; override in `~/.tilemon/config.json`). A tile lives while
+  its session does and vanishes when the harness drops it — no accretion, no manual clearing.
+- **Colour = attention-signal count.** Not a fixed palette — the tile's colour is *how many things
+  about it need you*: **1** = it exists, a finished outcome to glance at (green); **2** = existence +
+  one of {blocked, an open PR} (amber); **3+** = blocked *and* an open PR, or a PR with failing CI
+  (red). New signals just add to the count, so it never needs new colours. Open-PR / CI signals come
+  from Claude Code's `gh-pr-status-cache.json`. Leaves only — it doesn't roll up, so buckets keep
+  their weight-based heat.
 - **Target is the sink.** With `TILEMON_URL` set it POSTs to the hosted app (`/api/collect`); unset,
   it writes a local board directly. Same collector either way — run it next to Claude Code and point
   it at tilemon.com, or at your own `npx tilemon` server.
