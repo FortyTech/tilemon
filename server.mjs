@@ -358,7 +358,8 @@ if (SUBCMD === 'collect') {
   const once = () => runCollector({ sink, ccDir: CC_DIR, log: s => console.log(s) })
     .catch(e => { console.error('collect: ' + (e?.message || e)); return null; });   // fail soft — a stale board beats a crash
   if (hasFlag('--loop')) {
-    const secs = Number(parseOpts(cmdArgs).opts.interval) || 60;
+    const ivIdx = argv.indexOf('--interval');   // parseOpts/cmdArgs are scoped to the subcommand block above; use argv here
+    const secs = (ivIdx >= 0 && Number(argv[ivIdx + 1])) || 60;
     console.log(`tilemon collect --loop → ${remote ? CLIENT_BASE : BOARDS}  (every ${secs}s)`);
     await once();
     setInterval(once, secs * 1000);
