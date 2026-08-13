@@ -94,7 +94,7 @@ const STYLE = `
 .tlm-board .prs{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
 .tlm-board .pr{font-family:"Space Mono",monospace;font-size:9.5px;font-weight:600;line-height:1.55;text-decoration:none;cursor:pointer;
   padding:0 6px;border-radius:8px;background:#7C3AED;color:#F3E8FF;border:1px solid #A78BFA;white-space:nowrap;
-  box-shadow:0 1px 2px rgba(0,0,0,.35);position:relative;z-index:1}
+  box-shadow:0 1px 2px rgba(0,0,0,.35);position:relative;z-index:1;pointer-events:auto}
 .tlm-board .pr:hover{background:#8B5CF6;border-color:#DDD6FE;color:#fff}
 /* failing CI keeps a red pill — the chip must not hide the alarm the tile colour is already raising */
 .tlm-board .pr.bad{background:#C42B1C;color:#FFE3DD;border-color:#FF7A62}
