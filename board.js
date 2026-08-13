@@ -90,13 +90,15 @@ const STYLE = `
 /* inline note under a leaf's name — the "why", always visible (truncated to 2 lines); full text in the title tooltip */
 .tlm-board .nt{font-size:10px;line-height:1.25;opacity:.72;max-width:100%;overflow:hidden;text-overflow:ellipsis;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;white-space:normal}
-/* outstanding-PR chips on a leaf — link straight to GitHub; a dark pill so they read on any signal colour */
+/* outstanding-PR chips on a leaf — link straight to GitHub; PURPLE so they pop off any signal colour */
 .tlm-board .prs{display:flex;flex-wrap:wrap;gap:3px;margin-top:3px}
-.tlm-board .pr{font-family:"Space Mono",monospace;font-size:9.5px;line-height:1.5;text-decoration:none;cursor:pointer;
-  padding:0 5px;border-radius:8px;background:rgba(0,0,0,.36);color:#EAF0FF;border:1px solid rgba(255,255,255,.3);white-space:nowrap}
-.tlm-board .pr:hover{background:rgba(0,0,0,.52);border-color:#fff;color:#fff}
-.tlm-board .pr.bad{background:rgba(122,20,12,.68);color:#FFE3DD;border-color:rgba(255,122,98,.72)}
-.tlm-board .pr.bad:hover{background:rgba(150,26,16,.84);border-color:#ff8f78}
+.tlm-board .pr{font-family:"Space Mono",monospace;font-size:9.5px;font-weight:600;line-height:1.55;text-decoration:none;cursor:pointer;
+  padding:0 6px;border-radius:8px;background:#7C3AED;color:#F3E8FF;border:1px solid #A78BFA;white-space:nowrap;
+  box-shadow:0 1px 2px rgba(0,0,0,.35);position:relative;z-index:1}
+.tlm-board .pr:hover{background:#8B5CF6;border-color:#DDD6FE;color:#fff}
+/* failing CI keeps a red pill — the chip must not hide the alarm the tile colour is already raising */
+.tlm-board .pr.bad{background:#C42B1C;color:#FFE3DD;border-color:#FF7A62}
+.tlm-board .pr.bad:hover{background:#E03B29;border-color:#ff9d88}
 .tlm-board .tlm-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   font-family:"Space Mono",monospace;font-size:12.5px;color:var(--tlm-dim,#9A9182);text-align:center;padding:24px;pointer-events:none}
 .tlm-board .tlm-toolbar{position:absolute;top:0;left:0;right:0;height:36px;z-index:820;display:flex;align-items:center;gap:8px;padding:0 10px;
@@ -134,6 +136,13 @@ export function mount(boardEl, controlsEl, opts = {}) {
   const doc = boardEl.ownerDocument, win = doc.defaultView || globalThis;
   injectStyle(doc);
   boardEl.classList.add('tlm-board');
+
+  // A PR chip is a link, not part of the tile surface. Tiles grab the pointer on `pointerdown`
+  // (drag/resize, via setPointerCapture) which otherwise swallows the chip's click. Stop the press
+  // in the CAPTURE phase at the board level, BEFORE it descends to any tile's drag handler, so the
+  // native <a target=_blank> click navigates. Covers pointer + mouse + touch + the drill dblclick.
+  const chipGuard = e => { if (e.target && e.target.closest && e.target.closest('.pr')) e.stopPropagation(); };
+  for (const ev of ['pointerdown', 'mousedown', 'touchstart', 'dblclick']) boardEl.addEventListener(ev, chipGuard, true);
 
   let srcState = opts.state || { name: 'Priorities', _board: null, _path: '', children: [] };
   let root, viewRoot, viewRootKey = null, showWeights = false;
