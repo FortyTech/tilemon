@@ -21,6 +21,7 @@
 // Storage-agnostic: reads the local fleet, writes through an injected engine — so the same run
 // targets the file daemon or (with an HTTP-backed engine) hosted tilemon.com.
 
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { slugify } from './engine.js';
@@ -218,28 +219,64 @@ export function remoteSink({ url, token, fetchImpl = fetch }) {
   };
 }
 
+// Fingerprint of a plan. Key-sorted so the hash depends only on content, never on the order boards
+// were listed or jobs were read in.
+function planHash(plan) {
+  const stable = v => Array.isArray(v) ? v.map(stable)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])]))
+    : v;
+  return createHash('sha256').update(JSON.stringify(stable(plan))).digest('hex');
+}
+
+/**
+ * Memory for a long-running collector (`collect --loop`), so an unchanged poll makes NO call at all.
+ * Every call to hosted tilemon.com is ~40 database queries, and a poll every minute stops the
+ * database ever scaling to zero — so the loop remembers the hash of the last plan it posted, and the
+ * board list it routed against, and stays silent until the hash differs. `resyncMs` still forces a
+ * full sync now and then: it picks up boards added on the server (which only route after a fresh
+ * board list) and repairs anything changed or lost there.
+ */
+export function createCollectMemo({ resyncMs = 30 * 60_000 } = {}) {
+  return { hash: null, slugs: null, syncedAt: 0, resyncMs };
+}
+
 /**
  * Read the fleet, project the live sessions, and reconcile them onto the target. Owns only
  * origin:'session' nodes; human pins are never touched. `sink` is engineSink (local) or remoteSink.
+ * Pass a `memo` (createCollectMemo) to skip polls whose plan matches the last successful sync.
  */
-export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(), log = () => {} }) {
+export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(), log = () => {}, memo }) {
   sink = sink || engineSink(engine);
-  const existing = await sink.listSlugs();                              // the real boards to route against
+  fleet = fleet || readFleet(ccDir);
   const nameRe = compileNamePattern(loadConfig(ccDir).namePattern);    // ~/.tilemon/config.json override, else default
-  const { byBoard, dropped } = projectTiles(fleet || readFleet(ccDir), now, { knownSlugs: existing, nameRe });
+
+  // Unchanged since the last successful sync, and not due a resync → touch nothing, remote or local.
+  if (memo?.hash && now - memo.syncedAt < memo.resyncMs) {
+    const { byBoard, dropped } = projectTiles(fleet, now, { knownSlugs: memo.slugs, nameRe });
+    if (planHash(planBoards(byBoard, memo.slugs)) === memo.hash) {
+      const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
+      return { boards: Object.values(byBoard).filter(a => a.length).length, tiles, dropped: dropped.length, changed: 0, skipped: true };
+    }
+  }
+
+  const existing = await sink.listSlugs();                              // the real boards to route against
+  const { byBoard, dropped } = projectTiles(fleet, now, { knownSlugs: existing, nameRe });
   const plan = planBoards(byBoard, existing);
 
-  let changed = 0;
+  let changed = 0, failed = false;
   if (sink._postPlan) {                                   // remote: one batched request
     const res = await sink._postPlan(ORIGIN, plan);
     changed = res?.changed || 0;
   } else {                                                // local: per-board through the engine
     for (const [slug, nodes] of Object.entries(plan)) {
       const r = await sink.sync(slug, ORIGIN, nodes);
-      if (r.error) { log(`collect: ${slug} skipped (${r.error})`); continue; }
+      if (r.error) { log(`collect: ${slug} skipped (${r.error})`); failed = true; continue; }
       changed += (r.added + r.updated + r.removed);
     }
   }
+
+  // Remember only a sync that fully landed: a throw never gets here, and a skipped board must retry next poll.
+  if (memo && !failed) Object.assign(memo, { hash: planHash(plan), slugs: existing, syncedAt: now });
 
   const withTiles = Object.values(byBoard).filter(a => a.length).length;
   const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
