@@ -166,7 +166,8 @@ export function projectTiles({ jobs, sessions, prStatus = {} }, now = Date.now()
         note,
         // seen = the session's own heartbeat (NOT now) — stable across idle polls (no churn), and it
         // drives the live dot: a fresh session shows "active", a settled/old one just shows quietly.
-        seen: beat || now,
+        // No heartbeat at all → no `seen` (never `now`, which would read as live and change every poll).
+        ...(beat ? { seen: beat } : {}),
         origin: ORIGIN, sessionId: job.sessionId,
       };
       (byBoard[routeBoard(project, slugByNorm)] ||= []).push(node);
@@ -219,13 +220,16 @@ export function remoteSink({ url, token, fetchImpl = fetch }) {
   };
 }
 
-// Fingerprint of a plan. Key-sorted so the hash depends only on content, never on the order boards
-// were listed or jobs were read in.
+// Fingerprint of a plan. Object keys are sorted and each board's tiles are ordered by id, so the hash
+// depends only on content, never on the order boards were listed or jobs were read in. (The server
+// matches tiles by id too, so a reorder alone changes nothing there either.)
 function planHash(plan) {
   const stable = v => Array.isArray(v) ? v.map(stable)
     : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])]))
     : v;
-  return createHash('sha256').update(JSON.stringify(stable(plan))).digest('hex');
+  const byId = Object.fromEntries(Object.entries(plan).map(([slug, tiles]) =>
+    [slug, [...tiles].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))]));
+  return createHash('sha256').update(JSON.stringify(stable(byId))).digest('hex');
 }
 
 /**

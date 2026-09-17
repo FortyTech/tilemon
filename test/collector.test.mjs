@@ -250,6 +250,19 @@ async function memEngine(seed = {}) {
   calls = [];
   await runCollector({ sink, fleet: f3, now: NOW + 42 * 60_000 });
   eq(calls.length, 2, 'without a memo (one-shot collect) every run syncs');
+
+  // the same sessions read in a different order hash the same
+  const a = job({ daemonShort: 'o1', name: 'DOEFIN - a' }), b = job({ daemonShort: 'o2', name: 'DOEFIN - b' });
+  await poll(fleet(a, b), NOW + 50 * 60_000);
+  await poll(fleet(b, a), NOW + 51 * 60_000);
+  eq(calls, [], 'job read order does not change the hash');
+
+  // a session with no heartbeat and no updatedAt must not make every poll look changed
+  const quiet = { jobs: [job({ daemonShort: 'nb', name: 'DOEFIN - no beat' })], sessions: {} };
+  await poll(quiet, NOW + 60 * 60_000);
+  await poll(quiet, NOW + 61 * 60_000);
+  eq(calls, [], 'a job with no heartbeat still skips when unchanged');
+  eq('seen' in projectTiles(quiet, NOW, { knownSlugs: known }).byBoard.doefin[0], false, 'no heartbeat → no seen (never the wall clock)');
 }
 
 console.log(`collector: ${passed} passed, ${failed} failed`);
