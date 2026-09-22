@@ -41,7 +41,7 @@
 
 import http from 'node:http';
 import { createEngine, slugOk } from './engine.js';
-import { runCollector, projectTiles, readFleet, engineSink, remoteSink, compileNamePattern, loadConfig } from './collector.mjs';
+import { runCollector, createCollectMemo, projectTiles, readFleet, engineSink, remoteSink, compileNamePattern, loadConfig } from './collector.mjs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
 import { readFile, writeFile, rename, watch, readdir, mkdir } from 'node:fs/promises';
@@ -334,12 +334,15 @@ for (const m of ['status', 'weight', 'addNode', 'patchNode', 'removeNode', 'crea
 }
 const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-side entry point
 
-// `tilemon collect [--dry-run] [--loop] [--interval <s>]` — the passive collector: read
+// `tilemon collect [--dry-run] [--loop] [--interval <s>] [--resync <s>]` — the passive collector: read
 // ~/.claude/jobs and project the live sessions onto boards. The standalone file→board bridge.
 //   • target = TILEMON_URL if set (POST /api/collect on the hosted app) else the local file board.
 //   • --dry-run  prints the board it WOULD build, writes nothing.
 //   • --loop     stay running and re-collect every --interval seconds (default 60); this is the
 //                always-on bridge you run next to Claude Code — no local board server required.
+//                Against the hosted app, a poll whose plan hashes the same as the last successful sync
+//                makes no call at all, so an idle machine lets the database sleep; --resync <s>
+//                (default 1800, 0 = every poll) still forces a full sync that often.
 if (SUBCMD === 'collect') {
   const remote = !!process.env.TILEMON_URL;
   const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
@@ -355,12 +358,23 @@ if (SUBCMD === 'collect') {
     }
     process.exit(0);
   }
-  const once = () => runCollector({ sink, ccDir: CC_DIR, log: s => console.log(s) })
-    .catch(e => { console.error('collect: ' + (e?.message || e)); return null; });   // fail soft — a stale board beats a crash
+  const flagVal = f => { const i = argv.indexOf(f); return i >= 0 ? Number(argv[i + 1]) : NaN; };   // parseOpts/cmdArgs are scoped to the subcommand block above; use argv here
+  // Skip unchanged polls only against the hosted app, where each call costs database time. A local
+  // file sync is free and already writes nothing when nothing changed, and skipping there would only
+  // delay tiles reaching a board just created in the local UI.
+  const resyncSecs = Number.isFinite(flagVal('--resync')) && flagVal('--resync') >= 0 ? flagVal('--resync') : 1800;
+  const memo = hasFlag('--loop') && remote ? createCollectMemo({ resyncMs: resyncSecs * 1000 }) : undefined;
+  let busy = false;   // one poll at a time: overlapping polls could leave the memo remembering a plan the server doesn't hold
+  const once = async () => {
+    if (busy) return null;
+    busy = true;
+    try { return await runCollector({ sink, ccDir: CC_DIR, log: s => console.log(s), memo }); }
+    catch (e) { console.error('collect: ' + (e?.message || e)); return null; }   // fail soft — a stale board beats a crash
+    finally { busy = false; }
+  };
   if (hasFlag('--loop')) {
-    const ivIdx = argv.indexOf('--interval');   // parseOpts/cmdArgs are scoped to the subcommand block above; use argv here
-    const secs = (ivIdx >= 0 && Number(argv[ivIdx + 1])) || 60;
-    console.log(`tilemon collect --loop → ${remote ? CLIENT_BASE : BOARDS}  (every ${secs}s)`);
+    const secs = flagVal('--interval') || 60;
+    console.log(`tilemon collect --loop → ${remote ? CLIENT_BASE : BOARDS}  (every ${secs}s${memo ? `; unchanged polls skipped, full sync every ${resyncSecs}s — a new board gets its sessions within that` : ''})`);
     await once();
     setInterval(once, secs * 1000);
     await new Promise(() => {});   // standalone daemon: stay alive on the interval, never fall through to the server

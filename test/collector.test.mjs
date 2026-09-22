@@ -2,7 +2,7 @@
 // the ownership invariant (session tiles reconcile on project boards; human pins and `home` are
 // never touched). `home` and the buckets are the human's seeded structure — the collector leaves
 // them alone and only maintains session tiles on project boards (+ inbox).
-import { projectTiles, runCollector, remoteSink, compileNamePattern, countSignals, prLinks } from '../collector.mjs';
+import { projectTiles, runCollector, createCollectMemo, remoteSink, compileNamePattern, countSignals, prLinks } from '../collector.mjs';
 import { createEngine } from '../engine.js';
 
 let passed = 0, failed = 0;
@@ -208,6 +208,61 @@ async function memEngine(seed = {}) {
   eq(collectCall.body.boards['stale-board'], [], 'a board that lost its sessions is sent empty (gets cleared)');
   eq('home' in collectCall.body.boards, false, 'no home rebuild — home is human structure');
   eq(res.changed, 3, 'runCollector reports the server-side change count');
+}
+
+// ---- change-skip memo: an unchanged poll makes NO call; a change, a resync, or a failed post does ----
+{
+  let calls = [], down = false;
+  const fetchImpl = async (url, opts = {}) => {
+    calls.push((opts.method || 'GET') + ' ' + url.replace('https://www.tilemon.com', ''));
+    if (down && opts.method === 'POST') throw new Error('POST /api/collect -> 503');
+    if (url.endsWith('/api/boards')) return { ok: true, json: async () => [{ slug: 'doefin' }, { slug: 'twigface' }] };
+    return { ok: true, json: async () => ({ ok: true, changed: 1 }) };
+  };
+  const sink = remoteSink({ url: 'https://www.tilemon.com', token: 'k', fetchImpl });
+  const memo = createCollectMemo({ resyncMs: 30 * 60_000 });
+  const f = fleet(job({ daemonShort: 'm1', name: 'DOEFIN - x', state: 'blocked' }));
+  const poll = async (fl, now) => { calls = []; return runCollector({ sink, fleet: fl, now, memo }); };
+
+  await poll(f, NOW);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'first poll syncs');
+
+  const same = await poll(f, NOW + 60_000);
+  eq(calls, [], 'unchanged poll makes no call at all');
+  eq([same.skipped, same.tiles, same.changed], [true, 1, 0], 'a skipped poll still reports the tile count');
+
+  const f2 = fleet(job({ daemonShort: 'm1', name: 'DOEFIN - x', state: 'blocked' }), job({ daemonShort: 'm2', name: 'TWIGFACE - y' }));
+  await poll(f2, NOW + 120_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'a new session posts');
+  await poll(f2, NOW + 180_000);
+  eq(calls, [], 'and the next unchanged poll is silent again');
+
+  await poll(f2, NOW + 120_000 + 30 * 60_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'resync interval forces a full sync even when unchanged');
+
+  const f3 = fleet(job({ daemonShort: 'm1', name: 'DOEFIN - x', state: 'working' }));
+  down = true;
+  eq((await poll(f3, NOW + 40 * 60_000).catch(e => e.message)), 'POST /api/collect -> 503', 'a failed post throws to the loop');
+  down = false;
+  await poll(f3, NOW + 41 * 60_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'a failed post is retried on the next poll, not remembered');
+
+  calls = [];
+  await runCollector({ sink, fleet: f3, now: NOW + 42 * 60_000 });
+  eq(calls.length, 2, 'without a memo (one-shot collect) every run syncs');
+
+  // the same sessions read in a different order hash the same
+  const a = job({ daemonShort: 'o1', name: 'DOEFIN - a' }), b = job({ daemonShort: 'o2', name: 'DOEFIN - b' });
+  await poll(fleet(a, b), NOW + 50 * 60_000);
+  await poll(fleet(b, a), NOW + 51 * 60_000);
+  eq(calls, [], 'job read order does not change the hash');
+
+  // a session with no heartbeat and no updatedAt must not make every poll look changed
+  const quiet = { jobs: [job({ daemonShort: 'nb', name: 'DOEFIN - no beat' })], sessions: {} };
+  await poll(quiet, NOW + 60 * 60_000);
+  await poll(quiet, NOW + 61 * 60_000);
+  eq(calls, [], 'a job with no heartbeat still skips when unchanged');
+  eq('seen' in projectTiles(quiet, NOW, { knownSlugs: known }).byBoard.doefin[0], false, 'no heartbeat → no seen (never the wall clock)');
 }
 
 console.log(`collector: ${passed} passed, ${failed} failed`);
