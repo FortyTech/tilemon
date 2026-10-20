@@ -247,9 +247,14 @@ function planHash(plan) {
  * board list it routed against, and stays silent until the hash differs. `resyncMs` still forces a
  * full sync now and then: it picks up boards added on the server (which only route after a fresh
  * board list) and repairs anything changed or lost there.
+ *
+ * `settleMs` is hysteresis: a change posts only once it has held for that long. A long-running
+ * session woken by a watcher flips working → blocked and back within a minute or two; that blip
+ * nets to nothing on the board, and posting it twice is what kept the database awake overnight.
+ * Anything that sticks still lands, `settleMs` late.
  */
-export function createCollectMemo({ resyncMs = 60 * 60_000 } = {}) {
-  return { hash: null, slugs: null, syncedAt: 0, resyncMs };
+export function createCollectMemo({ resyncMs = 60 * 60_000, settleMs = 5 * 60_000 } = {}) {
+  return { hash: null, slugs: null, syncedAt: 0, resyncMs, settleMs, pendingSince: null };
 }
 
 /**
@@ -265,7 +270,10 @@ export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(
   // Unchanged since the last successful sync, and not due a resync → touch nothing, remote or local.
   if (memo?.hash && now - memo.syncedAt < memo.resyncMs) {
     const { byBoard, dropped } = projectTiles(fleet, now, { knownSlugs: memo.slugs, nameRe });
-    if (planHash(planBoards(byBoard, memo.slugs)) === memo.hash) {
+    const same = planHash(planBoards(byBoard, memo.slugs)) === memo.hash;
+    if (same) memo.pendingSince = null;                                  // a blip that reverted: forget it
+    else memo.pendingSince ??= now;                                      // a change: start its settle clock
+    if (same || now - memo.pendingSince < memo.settleMs) {
       const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
       return { boards: Object.values(byBoard).filter(a => a.length).length, tiles, dropped: dropped.length, changed: 0, skipped: true };
     }
@@ -288,7 +296,7 @@ export async function runCollector({ engine, sink, ccDir, fleet, now = Date.now(
   }
 
   // Remember only a sync that fully landed: a throw never gets here, and a skipped board must retry next poll.
-  if (memo && !failed) Object.assign(memo, { hash: planHash(plan), slugs: existing, syncedAt: now });
+  if (memo && !failed) Object.assign(memo, { hash: planHash(plan), slugs: existing, syncedAt: now, pendingSince: null });
 
   const withTiles = Object.values(byBoard).filter(a => a.length).length;
   const tiles = Object.values(byBoard).reduce((n, a) => n + a.length, 0);
