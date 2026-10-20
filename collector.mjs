@@ -170,6 +170,9 @@ export function projectTiles({ jobs, sessions, prStatus = {} }, now = Date.now()
         ...(beat ? { seen: beat } : {}),
         origin: ORIGIN, sessionId: job.sessionId,
       };
+      // What a blocked session is ASKING for is a real change, unlike a working session's progress
+      // line: carried for planHash only (non-enumerable, so it is never sent — `note` already says it).
+      Object.defineProperty(node, 'needs', { value: (job.needs || '').toString().replace(/\s+/g, ' ').trim(), enumerable: false });
       (byBoard[routeBoard(project, slugByNorm)] ||= []).push(node);
     } catch { dropped.push(job); }   // one malformed job must never abort the whole poll
   }
@@ -226,6 +229,7 @@ export function remoteSink({ url, token, fetchImpl = fetch }) {
 //
 // CHATTER is left out of the hash: `seen` (the heartbeat) and `note` (a working session's progress
 // line, e.g. "167 Bash calls, still running") move every minute or two for any session that is alive,
+// so `note` is hashed only through its `needs` part (a blocked session's question, a real change);
 // and a long-running session with a watcher is alive around the clock. Counting them made the memo
 // post on most polls, 24h a day, so the database never slept (2026-10-20: ~115 awake hours a week).
 // They are still SENT on every post, so they reach the board on the next real change or resync.
@@ -234,7 +238,7 @@ function planHash(plan) {
   const stable = v => Array.isArray(v) ? v.map(stable)
     : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])]))
     : v;
-  const quiet = t => Object.fromEntries(Object.entries(t).filter(([k]) => !CHATTER.includes(k)));
+  const quiet = t => ({ ...Object.fromEntries(Object.entries(t).filter(([k]) => !CHATTER.includes(k))), needs: t.needs || '' });
   const byId = Object.fromEntries(Object.entries(plan).map(([slug, tiles]) =>
     [slug, tiles.map(quiet).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))]));
   return createHash('sha256').update(JSON.stringify(stable(byId))).digest('hex');

@@ -282,6 +282,15 @@ async function memEngine(seed = {}) {
   await poll2(chat(NOW + 120_000, 'needs a decision', 'blocked'), NOW + 120_000);
   eq(calls, ['GET /api/boards', 'POST /api/collect'], 'a real change (status) posts');
   eq([posted.boards.doefin[0].seen, posted.boards.doefin[0].note], [NOW + 120_000, 'needs a decision'], 'and carries the latest heartbeat and note with it');
+  const ask = (needs) => fleet(job({ daemonShort: 'c1', name: 'DOEFIN - chatty', state: 'blocked', needs, _beat: NOW + 120_000 }));
+  await poll2(ask('approve the deploy'), NOW + 140_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'a blocked session gaining a question posts');
+  await poll2(ask('approve the deploy'), NOW + 150_000);
+  eq(calls, [], 'the same question, re-read, makes no call');
+  await poll2(ask('pick region A or B'), NOW + 160_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'a blocked session changing WHAT it needs posts');
+  eq(posted.boards.doefin[0].note, 'pick region A or B', 'with the new question in the note');
+  eq('needs' in posted.boards.doefin[0], false, 'needs is hash-only, never sent');
   await poll2(chat(NOW + 180_000, 'still needs a decision', 'blocked'), NOW + 120_000 + 60 * 60_000);
   eq(calls, ['GET /api/boards', 'POST /api/collect'], 'the resync delivers chatter that changed meanwhile');
 
