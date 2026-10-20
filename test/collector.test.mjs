@@ -263,6 +263,27 @@ async function memEngine(seed = {}) {
   await poll(quiet, NOW + 61 * 60_000);
   eq(calls, [], 'a job with no heartbeat still skips when unchanged');
   eq('seen' in projectTiles(quiet, NOW, { knownSlugs: known }).byBoard.doefin[0], false, 'no heartbeat → no seen (never the wall clock)');
+
+  // chatter — a heartbeat or a progress note moving — is not a change: no call until something real moves
+  let posted = null;
+  const sink2 = remoteSink({ url: 'https://www.tilemon.com', token: 'k', fetchImpl: async (url, opts = {}) => {
+    calls.push((opts.method || 'GET') + ' ' + url.replace('https://www.tilemon.com', ''));
+    if (opts.method === 'POST') posted = JSON.parse(opts.body);
+    if (url.endsWith('/api/boards')) return { ok: true, json: async () => [{ slug: 'doefin' }] };
+    return { ok: true, json: async () => ({ ok: true, changed: 1 }) };
+  } });
+  const memo2 = createCollectMemo({ resyncMs: 60 * 60_000 });
+  const poll2 = async (fl, now) => { calls = []; return runCollector({ sink: sink2, fleet: fl, now, memo: memo2 }); };
+  const chat = (beat, detail, state = 'working') => fleet(job({ daemonShort: 'c1', name: 'DOEFIN - chatty', state, detail, _beat: beat }));
+  await poll2(chat(NOW, '3 Bash calls'), NOW);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'chatter: first poll syncs');
+  await poll2(chat(NOW + 60_000, '9 Bash calls'), NOW + 60_000);
+  eq(calls, [], 'a moved heartbeat and a new progress note alone make no call');
+  await poll2(chat(NOW + 120_000, 'needs a decision', 'blocked'), NOW + 120_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'a real change (status) posts');
+  eq([posted.boards.doefin[0].seen, posted.boards.doefin[0].note], [NOW + 120_000, 'needs a decision'], 'and carries the latest heartbeat and note with it');
+  await poll2(chat(NOW + 180_000, 'still needs a decision', 'blocked'), NOW + 120_000 + 60 * 60_000);
+  eq(calls, ['GET /api/boards', 'POST /api/collect'], 'the resync delivers chatter that changed meanwhile');
 }
 
 console.log(`collector: ${passed} passed, ${failed} failed`);

@@ -341,8 +341,9 @@ const resolveBoard = slug => engine.resolveBoard(slug);   // the routes' read-si
 //   • --loop     stay running and re-collect every --interval seconds (default 60); this is the
 //                always-on bridge you run next to Claude Code — no local board server required.
 //                Against the hosted app, a poll whose plan hashes the same as the last successful sync
-//                makes no call at all, so an idle machine lets the database sleep; --resync <s>
-//                (default 1800, 0 = every poll) still forces a full sync that often.
+//                makes no call at all, so an idle machine lets the database sleep. Heartbeats and
+//                progress notes alone don't count as a change; they ride along on the next real
+//                change or on the --resync <s> full sync (default 3600, 0 = every poll).
 if (SUBCMD === 'collect') {
   const remote = !!process.env.TILEMON_URL;
   const sink = remote ? remoteSink({ url: CLIENT_BASE, token: TOKEN }) : engineSink(engine);
@@ -362,7 +363,7 @@ if (SUBCMD === 'collect') {
   // Skip unchanged polls only against the hosted app, where each call costs database time. A local
   // file sync is free and already writes nothing when nothing changed, and skipping there would only
   // delay tiles reaching a board just created in the local UI.
-  const resyncSecs = Number.isFinite(flagVal('--resync')) && flagVal('--resync') >= 0 ? flagVal('--resync') : 1800;
+  const resyncSecs = Number.isFinite(flagVal('--resync')) && flagVal('--resync') >= 0 ? flagVal('--resync') : 3600;
   const memo = hasFlag('--loop') && remote ? createCollectMemo({ resyncMs: resyncSecs * 1000 }) : undefined;
   let busy = false;   // one poll at a time: overlapping polls could leave the memo remembering a plan the server doesn't hold
   const once = async () => {

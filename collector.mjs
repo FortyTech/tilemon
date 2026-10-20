@@ -223,12 +223,20 @@ export function remoteSink({ url, token, fetchImpl = fetch }) {
 // Fingerprint of a plan. Object keys are sorted and each board's tiles are ordered by id, so the hash
 // depends only on content, never on the order boards were listed or jobs were read in. (The server
 // matches tiles by id too, so a reorder alone changes nothing there either.)
+//
+// CHATTER is left out of the hash: `seen` (the heartbeat) and `note` (a working session's progress
+// line, e.g. "167 Bash calls, still running") move every minute or two for any session that is alive,
+// and a long-running session with a watcher is alive around the clock. Counting them made the memo
+// post on most polls, 24h a day, so the database never slept (2026-10-20: ~115 awake hours a week).
+// They are still SENT on every post, so they reach the board on the next real change or resync.
+const CHATTER = ['seen', 'note'];
 function planHash(plan) {
   const stable = v => Array.isArray(v) ? v.map(stable)
     : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map(k => [k, stable(v[k])]))
     : v;
+  const quiet = t => Object.fromEntries(Object.entries(t).filter(([k]) => !CHATTER.includes(k)));
   const byId = Object.fromEntries(Object.entries(plan).map(([slug, tiles]) =>
-    [slug, [...tiles].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))]));
+    [slug, tiles.map(quiet).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))]));
   return createHash('sha256').update(JSON.stringify(stable(byId))).digest('hex');
 }
 
@@ -240,7 +248,7 @@ function planHash(plan) {
  * full sync now and then: it picks up boards added on the server (which only route after a fresh
  * board list) and repairs anything changed or lost there.
  */
-export function createCollectMemo({ resyncMs = 30 * 60_000 } = {}) {
+export function createCollectMemo({ resyncMs = 60 * 60_000 } = {}) {
   return { hash: null, slugs: null, syncedAt: 0, resyncMs };
 }
 
